@@ -358,7 +358,9 @@ h2 {
   grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-rows: auto 1fr;
   gap: 18px;
+  height: calc(100vh - 72px);
   overflow-anchor: none;
+  overflow: hidden;
   width: min(1440px, calc(100vw - 24px));
   margin: 0 auto;
   padding: 18px 0;
@@ -396,7 +398,8 @@ h2 {
 
 .poker-room {
   min-width: 0;
-  min-height: 680px;
+  min-height: 0;
+  height: 100%;
   display: grid;
   place-items: center;
   overflow-anchor: none;
@@ -404,10 +407,9 @@ h2 {
 
 .felt-table {
   position: relative;
-  width: min(100%, 980px);
+  width: min(100%, 980px, calc((100vh - 300px) * 1.48));
   aspect-ratio: 1.48;
-  min-height: 520px;
-  contain: layout paint;
+  min-height: min(520px, calc(100vh - 300px));
   border-radius: 50%;
   background:
     radial-gradient(ellipse at center, rgba(255, 255, 255, 0.11), transparent 46%),
@@ -439,7 +441,6 @@ h2 {
   gap: 16px;
   min-height: 230px;
   overflow: visible;
-  contain: layout paint;
 }
 
 .board,
@@ -851,7 +852,6 @@ h2 {
   position: absolute;
   width: clamp(132px, 17vw, 178px);
   min-height: 118px;
-  contain: layout paint;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1009,6 +1009,9 @@ h2 {
   grid-template-rows: auto auto;
   gap: 14px;
   align-content: start;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
   overflow-anchor: none;
 }
 
@@ -1046,8 +1049,8 @@ h2 {
 .logs {
   display: grid;
   gap: 8px;
-  height: 280px;
-  min-height: 280px;
+  height: clamp(150px, calc(100vh - 560px), 280px);
+  min-height: 150px;
   overflow: auto;
   color: var(--muted);
   font-size: 13px;
@@ -1133,12 +1136,24 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .game-layout {
+    height: auto;
+    overflow: visible;
+  }
+
   .side-panel {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+    overflow: visible;
   }
 
   .poker-room {
+    height: auto;
     min-height: 620px;
+  }
+
+  .logs {
+    height: 280px;
   }
 }
 

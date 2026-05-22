@@ -13,6 +13,7 @@ const state = {
   poller: null,
   tableRequestSeq: 0,
   renderedTableId: null,
+  scrollLock: null,
   admin: { users: [], tables: [], audit: [] }
 };
 
@@ -157,14 +158,46 @@ async function runBusy(task) {
   if (state.busy) return;
   state.busy = true;
   state.tableRequestSeq += 1;
-  render();
+  lockTableScroll();
+  syncBusyIndicator();
+  let errorMessage = "";
   try {
     await task();
   } catch (error) {
-    setMessage(error.message);
+    errorMessage = error.message || "请求失败";
   } finally {
     state.busy = false;
-    render();
+    syncBusyIndicator();
+    if (errorMessage) {
+      setMessage(errorMessage);
+    } else {
+      render();
+    }
+  }
+}
+
+function lockTableScroll() {
+  if (state.view === "table" && state.table) {
+    if (state.scrollLock && state.scrollLock.tableId === state.table.id) return;
+    state.scrollLock = {
+      tableId: state.table.id,
+      x: window.scrollX,
+      y: window.scrollY
+    };
+  }
+}
+
+function syncBusyIndicator() {
+  const existing = document.querySelector("[data-loading-indicator]");
+  if (!document.body) return;
+  if (state.busy && !existing) {
+    const loading = document.createElement("div");
+    loading.className = "loading";
+    loading.dataset.loadingIndicator = "true";
+    loading.innerHTML = "<span></span>";
+    document.body.appendChild(loading);
+  } else if (!state.busy && existing) {
+    existing.remove();
   }
 }
 
@@ -297,18 +330,22 @@ async function playerAction(action, amount = null) {
 }
 
 async function refreshTable(silent = true) {
-  if (!state.table) return;
-  if (state.busy) return;
+  if (!state.table) return false;
+  if (state.busy) return false;
   const requestSeq = ++state.tableRequestSeq;
   const tableId = state.table.id;
   try {
     const result = await api(`/tables/${tableId}`);
-    if (requestSeq !== state.tableRequestSeq || !state.table || state.table.id !== tableId) return;
+    if (requestSeq !== state.tableRequestSeq || !state.table || state.table.id !== tableId) return false;
+    const changed = JSON.stringify(result.user) !== JSON.stringify(state.user)
+      || JSON.stringify(result.table) !== JSON.stringify(state.table);
     state.user = result.user;
     state.table = result.table;
-    if (!silent) render();
+    if (changed && !silent) render();
+    return changed;
   } catch (error) {
     if (!silent) setMessage(error.message);
+    return false;
   }
 }
 
@@ -317,8 +354,8 @@ function startPolling() {
   state.poller = window.setInterval(async () => {
     if (state.busy) return;
     if (state.view === "table" && state.table) {
-      await refreshTable();
-      render();
+      const changed = await refreshTable();
+      if (changed) render();
     } else if (state.view === "lobby") {
       await loadLobby(true);
       render();
@@ -396,7 +433,6 @@ function shell(content) {
       </header>
       ${content}
       ${state.message ? `<div class="toast">${state.message}</div>` : ""}
-      ${state.busy ? `<div class="loading"><span></span></div>` : ""}
     </div>
   `;
 }
@@ -714,8 +750,9 @@ function adminView() {
 function render() {
   const nextTableId = state.view === "table" && state.table ? state.table.id : null;
   const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
-  const scrollX = window.scrollX;
-  const scrollY = window.scrollY;
+  const lockedScroll = state.scrollLock && nextTableId === state.scrollLock.tableId ? state.scrollLock : null;
+  const scrollX = lockedScroll ? lockedScroll.x : window.scrollX;
+  const scrollY = lockedScroll ? lockedScroll.y : window.scrollY;
 
   if (!state.user) {
     $app.innerHTML = authView();
@@ -727,7 +764,8 @@ function render() {
     $app.innerHTML = lobbyView();
   }
   state.renderedTableId = nextTableId;
-  if (preserveScroll) restoreScrollPosition(scrollX, scrollY);
+  if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
+  if (lockedScroll) state.scrollLock = null;
 }
 
 function restoreScrollPosition(scrollX, scrollY) {
@@ -737,6 +775,8 @@ function restoreScrollPosition(scrollX, scrollY) {
     : (callback) => window.setTimeout(callback, 0);
   defer(() => window.scrollTo(scrollX, scrollY));
   defer(() => defer(() => window.scrollTo(scrollX, scrollY)));
+  window.setTimeout(() => window.scrollTo(scrollX, scrollY), 60);
+  window.setTimeout(() => window.scrollTo(scrollX, scrollY), 180);
 }
 
 function escapeHtml(value) {
@@ -761,6 +801,14 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "recharge") recharge(form);
   if (form.dataset.form === "add-bot") addBot(form);
 });
+
+document.addEventListener("pointerdown", (event) => {
+  const target = event.target.closest("button");
+  if (!target) return;
+  if (target.dataset.actionMove || target.dataset.action === "start-hand") {
+    lockTableScroll();
+  }
+}, true);
 
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("button");
