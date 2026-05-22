@@ -11,6 +11,7 @@ const state = {
   message: "",
   busy: false,
   poller: null,
+  tableRequestSeq: 0,
   admin: { users: [], tables: [], audit: [] }
 };
 
@@ -154,6 +155,7 @@ async function api(path, options = {}) {
 async function runBusy(task) {
   if (state.busy) return;
   state.busy = true;
+  state.tableRequestSeq += 1;
   render();
   try {
     await task();
@@ -295,8 +297,12 @@ async function playerAction(action, amount = null) {
 
 async function refreshTable(silent = true) {
   if (!state.table) return;
+  if (state.busy) return;
+  const requestSeq = ++state.tableRequestSeq;
+  const tableId = state.table.id;
   try {
-    const result = await api(`/tables/${state.table.id}`);
+    const result = await api(`/tables/${tableId}`);
+    if (requestSeq !== state.tableRequestSeq || !state.table || state.table.id !== tableId) return;
     state.user = result.user;
     state.table = result.table;
     if (!silent) render();
@@ -308,6 +314,7 @@ async function refreshTable(silent = true) {
 function startPolling() {
   stopPolling();
   state.poller = window.setInterval(async () => {
+    if (state.busy) return;
     if (state.view === "table" && state.table) {
       await refreshTable();
       render();
@@ -553,6 +560,7 @@ function seatHtml(entry, table) {
   const isTurn = table.currentTurnSeat === actualSeat;
   const dealer = table.dealerSeat === actualSeat;
   const className = ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""].join(" ");
+  const holeCards = occupied && player.hole && player.hole.length ? player.hole : [null, null];
 
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
@@ -567,7 +575,7 @@ function seatHtml(entry, table) {
   return `
     <div class="${className}">
       ${dealer ? `<span class="dealer">D</span>` : ""}
-      <div class="hole-cards">${(player.hole || [null, null]).map((card) => cardHtml(card, true)).join("")}</div>
+      <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
         <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
         <span>${money(player.stack)}</span>
