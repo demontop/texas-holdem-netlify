@@ -497,6 +497,9 @@ function tableView() {
   const seats = seatEntries(table);
   const board = [...(table.community || [])];
   while (board.length < 5) board.push(null);
+  const winnersText = table.winners?.length
+    ? table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")
+    : "";
   const isSeated = table.youSeat != null;
   const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
   const controls = table.controls || {};
@@ -523,7 +526,7 @@ function tableView() {
               ${chipStackHtml(table.pot)}
               <span>底池</span>
             </div>
-            ${table.winners?.length ? `<div class="winner-strip">${table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")}</div>` : ""}
+            <div class="winner-strip ${winnersText ? "" : "empty"}" ${winnersText ? "" : `aria-hidden="true"`}>${winnersText || "等待结算"}</div>
           </div>
           ${seats.map((entry) => seatHtml(entry, table)).join("")}
         </div>
@@ -724,7 +727,16 @@ function render() {
     $app.innerHTML = lobbyView();
   }
   state.renderedTableId = nextTableId;
-  if (preserveScroll) window.scrollTo(scrollX, scrollY);
+  if (preserveScroll) restoreScrollPosition(scrollX, scrollY);
+}
+
+function restoreScrollPosition(scrollX, scrollY) {
+  window.scrollTo(scrollX, scrollY);
+  const defer = window.requestAnimationFrame
+    ? window.requestAnimationFrame.bind(window)
+    : (callback) => window.setTimeout(callback, 0);
+  defer(() => window.scrollTo(scrollX, scrollY));
+  defer(() => defer(() => window.scrollTo(scrollX, scrollY)));
 }
 
 function escapeHtml(value) {

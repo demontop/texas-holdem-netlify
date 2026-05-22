@@ -399,6 +399,7 @@ h2 {
   min-height: 680px;
   display: grid;
   place-items: center;
+  overflow-anchor: none;
 }
 
 .felt-table {
@@ -406,6 +407,7 @@ h2 {
   width: min(100%, 980px);
   aspect-ratio: 1.48;
   min-height: 520px;
+  contain: layout paint;
   border-radius: 50%;
   background:
     radial-gradient(ellipse at center, rgba(255, 255, 255, 0.11), transparent 46%),
@@ -431,23 +433,35 @@ h2 {
   position: absolute;
   inset: 31% 18%;
   display: grid;
+  grid-template-rows: auto 42px 36px;
   align-content: center;
   justify-items: center;
   gap: 16px;
+  min-height: 230px;
+  overflow: visible;
+  contain: layout paint;
 }
 
 .board,
 .hole-cards {
   display: flex;
+  align-items: center;
   justify-content: center;
+  flex-wrap: nowrap;
   gap: clamp(4px, 1vw, 10px);
+}
+
+.board {
+  min-height: 112px;
 }
 
 .card {
   position: relative;
   display: block;
+  flex: 0 0 auto;
   width: clamp(50px, 6vw, 78px);
   aspect-ratio: 0.7;
+  contain: layout paint;
   overflow: hidden;
   border-radius: 7px;
   background: #fbf7eb;
@@ -683,7 +697,10 @@ h2 {
 .pot {
   display: grid;
   justify-items: center;
+  align-content: center;
   gap: 5px;
+  min-width: 92px;
+  min-height: 42px;
   color: var(--muted);
 }
 
@@ -814,6 +831,8 @@ h2 {
 }
 
 .winner-strip {
+  min-width: min(360px, 100%);
+  min-height: 36px;
   max-width: 100%;
   padding: 8px 12px;
   border-radius: 999px;
@@ -824,10 +843,15 @@ h2 {
   white-space: nowrap;
 }
 
+.winner-strip.empty {
+  opacity: 0;
+}
+
 .seat {
   position: absolute;
   width: clamp(132px, 17vw, 178px);
   min-height: 118px;
+  contain: layout paint;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -982,8 +1006,10 @@ h2 {
 
 .side-panel {
   display: grid;
+  grid-template-rows: auto auto;
   gap: 14px;
   align-content: start;
+  overflow-anchor: none;
 }
 
 .control-panel,
@@ -994,6 +1020,7 @@ h2 {
 .control-panel {
   display: grid;
   gap: 14px;
+  min-height: 254px;
 }
 
 .call-box {
@@ -1019,10 +1046,12 @@ h2 {
 .logs {
   display: grid;
   gap: 8px;
-  max-height: 280px;
+  height: 280px;
+  min-height: 280px;
   overflow: auto;
   color: var(--muted);
   font-size: 13px;
+  align-content: start;
 }
 
 .admin-layout {
@@ -1196,10 +1225,13 @@ th {
 
   .table-center {
     inset: 33% 5%;
+    grid-template-rows: 64px 42px 32px;
+    min-height: 168px;
   }
 
   .board {
     gap: 5px;
+    min-height: 64px;
   }
 
   .seat-0 {
