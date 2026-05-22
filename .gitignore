@@ -1,0 +1,6 @@
+.DS_Store
+.data/
+.netlify/
+node_modules/
+dist/
+npm-debug.log*
