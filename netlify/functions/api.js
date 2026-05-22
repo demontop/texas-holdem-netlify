@@ -9,6 +9,7 @@ const ACTIVE_STAGES = new Set(["preflop", "flop", "turn", "river"]);
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
+let blobsModulePromise = null;
 
 class HttpError extends Error {
   constructor(statusCode, message) {
@@ -28,18 +29,34 @@ function defaultDb() {
 }
 
 function shouldUseBlobs() {
-  return Boolean(process.env.NETLIFY || process.env.NETLIFY_BLOBS_CONTEXT || process.env.NETLIFY_BLOBS_TOKEN);
+  return Boolean(process.env.NETLIFY_BLOBS_CONTEXT || (process.env.NETLIFY_BLOBS_TOKEN && process.env.SITE_ID));
 }
 
 async function getBlobStore() {
-  const mod = await import("@netlify/blobs");
-  return mod.getStore(STORE_NAME);
+  const mod = await getBlobsModule();
+  if (process.env.NETLIFY_BLOBS_CONTEXT) return mod.getStore(STORE_NAME);
+  return mod.getStore({
+    name: STORE_NAME,
+    siteID: process.env.SITE_ID,
+    token: process.env.NETLIFY_BLOBS_TOKEN
+  });
+}
+
+function getBlobsModule() {
+  if (!blobsModulePromise) blobsModulePromise = import("@netlify/blobs");
+  return blobsModulePromise;
+}
+
+async function configureBlobs(event) {
+  if (process.env.NETLIFY_BLOBS_CONTEXT || !event.blobs) return;
+  const mod = await getBlobsModule();
+  if (typeof mod.connectLambda === "function") mod.connectLambda(event);
 }
 
 async function readDb() {
   if (shouldUseBlobs()) {
     const store = await getBlobStore();
-    const text = await store.get(DB_KEY, { type: "text", consistency: "strong" });
+    const text = await store.get(DB_KEY, { type: "text" });
     return normalizeDb(text ? JSON.parse(text) : defaultDb());
   }
 
@@ -798,6 +815,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return json(204, {});
 
   try {
+    await configureBlobs(event);
     const method = event.httpMethod;
     const segments = segmentsFromEvent(event);
     const body = method === "POST" ? parseBody(event) : {};
