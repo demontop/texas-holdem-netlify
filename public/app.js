@@ -12,6 +12,7 @@ const state = {
   busy: false,
   poller: null,
   tableRequestSeq: 0,
+  renderedTableId: null,
   admin: { users: [], tables: [], audit: [] }
 };
 
@@ -561,6 +562,7 @@ function seatHtml(entry, table) {
   const dealer = table.dealerSeat === actualSeat;
   const className = ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""].join(" ");
   const holeCards = occupied && player.hole && player.hole.length ? player.hole : [null, null];
+  const hasBet = occupied && Number(player.bet) > 0;
 
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
@@ -580,7 +582,7 @@ function seatHtml(entry, table) {
         <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
         <span>${money(player.stack)}</span>
       </div>
-      ${player.bet > 0 ? `<div class="seat-bet">${chipStackHtml(player.bet, true)}</div>` : ""}
+      <div class="seat-bet ${hasBet ? "" : "empty"}" ${hasBet ? "" : `aria-hidden="true"`}>${hasBet ? chipStackHtml(player.bet, true) : ""}</div>
       <div class="status-pill">${escapeHtml(player.lastAction || "等待")}${player.bestHandName ? ` · ${player.bestHandName}` : ""}</div>
     </div>
   `;
@@ -707,6 +709,11 @@ function adminView() {
 }
 
 function render() {
+  const nextTableId = state.view === "table" && state.table ? state.table.id : null;
+  const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+
   if (!state.user) {
     $app.innerHTML = authView();
   } else if (state.view === "table") {
@@ -716,6 +723,8 @@ function render() {
   } else {
     $app.innerHTML = lobbyView();
   }
+  state.renderedTableId = nextTableId;
+  if (preserveScroll) window.scrollTo(scrollX, scrollY);
 }
 
 function escapeHtml(value) {

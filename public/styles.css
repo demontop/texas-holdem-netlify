@@ -358,6 +358,7 @@ h2 {
   grid-template-columns: minmax(0, 1fr) 320px;
   grid-template-rows: auto 1fr;
   gap: 18px;
+  overflow-anchor: none;
   width: min(1440px, calc(100vw - 24px));
   margin: 0 auto;
   padding: 18px 0;
@@ -953,7 +954,16 @@ h2 {
   position: absolute;
   left: 50%;
   bottom: -28px;
+  display: grid;
+  place-items: center;
+  min-width: 76px;
+  min-height: 29px;
   transform: translateX(-50%);
+}
+
+.seat-bet.empty {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .status-pill {
