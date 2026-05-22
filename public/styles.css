@@ -355,15 +355,15 @@ h2 {
 
 .game-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) clamp(310px, 24vw, 360px);
   grid-template-rows: auto 1fr;
-  gap: 18px;
+  gap: 16px;
   height: calc(100vh - 72px);
   overflow-anchor: none;
   overflow: hidden;
   width: min(1440px, calc(100vw - 24px));
   margin: 0 auto;
-  padding: 18px 0;
+  padding: 14px 0 16px;
 }
 
 .table-toolbar {
@@ -372,7 +372,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 62px;
+  min-height: 56px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -407,9 +407,9 @@ h2 {
 
 .felt-table {
   position: relative;
-  width: min(100%, 980px, calc((100vh - 300px) * 1.48));
+  width: min(100%, 1040px, calc((100vh - 275px) * 1.48));
   aspect-ratio: 1.48;
-  min-height: min(520px, calc(100vh - 300px));
+  min-height: min(540px, calc(100vh - 275px));
   border-radius: 50%;
   background:
     radial-gradient(ellipse at center, rgba(255, 255, 255, 0.11), transparent 46%),
@@ -435,11 +435,11 @@ h2 {
   position: absolute;
   inset: 31% 18%;
   display: grid;
-  grid-template-rows: auto 42px 36px;
+  grid-template-rows: auto 40px 34px;
   align-content: center;
   justify-items: center;
-  gap: 16px;
-  min-height: 230px;
+  gap: 12px;
+  min-height: 204px;
   overflow: visible;
 }
 
@@ -453,14 +453,14 @@ h2 {
 }
 
 .board {
-  min-height: 112px;
+  min-height: 100px;
 }
 
 .card {
   position: relative;
   display: block;
   flex: 0 0 auto;
-  width: clamp(50px, 6vw, 78px);
+  width: clamp(46px, 4.9vw, 70px);
   aspect-ratio: 0.7;
   contain: layout paint;
   overflow: hidden;
@@ -475,7 +475,7 @@ h2 {
 }
 
 .card.small {
-  width: clamp(34px, 4vw, 52px);
+  width: clamp(30px, 3.4vw, 46px);
 }
 
 .card.red {
@@ -833,7 +833,7 @@ h2 {
 
 .winner-strip {
   min-width: min(360px, 100%);
-  min-height: 36px;
+  min-height: 34px;
   max-width: 100%;
   padding: 8px 12px;
   border-radius: 999px;
@@ -850,9 +850,9 @@ h2 {
 
 .seat {
   position: absolute;
-  width: clamp(132px, 17vw, 178px);
-  min-height: 118px;
-  padding: 8px;
+  width: clamp(120px, 14vw, 160px);
+  min-height: 108px;
+  padding: 7px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(10, 13, 14, 0.82);
@@ -894,7 +894,7 @@ h2 {
 
 .seat-0 {
   left: 50%;
-  bottom: -58px;
+  bottom: -46px;
   transform: translateX(-50%);
 }
 
@@ -910,7 +910,7 @@ h2 {
 
 .seat-3 {
   left: 50%;
-  top: -58px;
+  top: -46px;
   transform: translateX(-50%);
 }
 
@@ -943,8 +943,8 @@ h2 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
-  margin-top: 7px;
-  padding: 8px 9px;
+  margin-top: 6px;
+  padding: 7px 8px;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.3);
 }
@@ -991,7 +991,7 @@ h2 {
 }
 
 .status-pill {
-  margin-top: 6px;
+  margin-top: 5px;
   min-height: 24px;
   padding: 4px 8px;
   border-radius: 999px;
@@ -1006,7 +1006,7 @@ h2 {
 
 .side-panel {
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: max-content minmax(0, 1fr);
   gap: 14px;
   align-content: start;
   max-height: 100%;
@@ -1022,8 +1022,8 @@ h2 {
 
 .control-panel {
   display: grid;
-  gap: 14px;
-  min-height: 254px;
+  gap: 12px;
+  min-height: 0;
 }
 
 .call-box {
@@ -1049,12 +1049,23 @@ h2 {
 .logs {
   display: grid;
   gap: 8px;
-  height: clamp(150px, calc(100vh - 560px), 280px);
+  height: clamp(170px, calc(100vh - 540px), 300px);
   min-height: 150px;
   overflow: auto;
   color: var(--muted);
   font-size: 13px;
   align-content: start;
+}
+
+.log-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.log-panel .logs {
+  height: 100%;
+  min-height: 0;
 }
 
 .admin-layout {

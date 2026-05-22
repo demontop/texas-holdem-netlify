@@ -531,13 +531,8 @@ function tableView() {
   if (!table) return lobbyView();
   const seatCount = table.maxSeats || 6;
   const seats = seatEntries(table);
-  const board = [...(table.community || [])];
-  while (board.length < 5) board.push(null);
-  const winnersText = table.winners?.length
-    ? table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")
-    : "";
+  const winnersText = winnerText(table);
   const isSeated = table.youSeat != null;
-  const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
   const controls = table.controls || {};
 
   return shell(`
@@ -546,22 +541,16 @@ function tableView() {
         <button class="ghost" data-action="back-lobby">大厅</button>
         <div>
           <strong>${escapeHtml(table.name)}</strong>
-          <span>${stageLabel(table.status)} · 第 ${table.handNo || 0} 手牌 · ${table.smallBlind}/${table.bigBlind}</span>
+          <span>${tableMetaText(table)}</span>
         </div>
-        <div class="toolbar-actions">
-          ${canStart ? `<button class="primary slim" data-action="start-hand">发牌</button>` : ""}
-          ${isSeated && !["preflop", "flop", "turn", "river"].includes(table.status) ? `<button class="ghost" data-action="leave-table">离桌</button>` : ""}
-        </div>
+        <div class="toolbar-actions">${toolbarActionsHtml(table)}</div>
       </section>
       <section class="poker-room">
         <div class="felt-table seats-${seatCount}">
           <div class="rail"></div>
           <div class="table-center">
-            <div class="board">${board.map((card) => cardHtml(card)).join("")}</div>
-            <div class="pot">
-              ${chipStackHtml(table.pot)}
-              <span>底池</span>
-            </div>
+            <div class="board">${boardHtml(table)}</div>
+            <div class="pot">${potHtml(table)}</div>
             <div class="winner-strip ${winnersText ? "" : "empty"}" ${winnersText ? "" : `aria-hidden="true"`}>${winnersText || "等待结算"}</div>
           </div>
           ${seats.map((entry) => seatHtml(entry, table)).join("")}
@@ -571,13 +560,49 @@ function tableView() {
         ${isSeated ? actionPanel(controls, table) : sitPanel(table)}
         <div class="log-panel">
           <h2>牌局记录</h2>
-          <div class="logs">
-            ${(table.logs || []).map((entry) => `<p>${escapeHtml(entry.text)}</p>`).join("") || "<p>等待开局</p>"}
-          </div>
+          <div class="logs">${logsHtml(table)}</div>
         </div>
       </aside>
     </main>
   `);
+}
+
+function tableMetaText(table) {
+  return `${stageLabel(table.status)} · 第 ${table.handNo || 0} 手牌 · ${table.smallBlind}/${table.bigBlind}`;
+}
+
+function toolbarActionsHtml(table) {
+  const isSeated = table.youSeat != null;
+  const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
+  const canLeave = isSeated && !["preflop", "flop", "turn", "river"].includes(table.status);
+  return `
+    ${canStart ? `<button class="primary slim" data-action="start-hand">发牌</button>` : ""}
+    ${canLeave ? `<button class="ghost" data-action="leave-table">离桌</button>` : ""}
+  `;
+}
+
+function boardCards(table) {
+  const board = [...(table.community || [])];
+  while (board.length < 5) board.push(null);
+  return board;
+}
+
+function boardHtml(table) {
+  return boardCards(table).map((card, index) => `<div class="board-slot" data-board-card="${index}">${cardHtml(card)}</div>`).join("");
+}
+
+function potHtml(table) {
+  return `${chipStackHtml(table.pot)}<span>底池</span>`;
+}
+
+function winnerText(table) {
+  return table.winners?.length
+    ? table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")
+    : "";
+}
+
+function logsHtml(table) {
+  return (table.logs || []).map((entry) => `<p>${escapeHtml(entry.text)}</p>`).join("") || "<p>等待开局</p>";
 }
 
 function seatEntries(table) {
@@ -606,7 +631,7 @@ function seatHtml(entry, table) {
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
     return `
-      <button class="${className}" ${canJoin ? `data-join-seat="${actualSeat}"` : "disabled"}>
+      <button class="${className}" data-seat="${actualSeat}" data-display-seat="${displaySeat}" ${canJoin ? `data-join-seat="${actualSeat}"` : "disabled"}>
         <span class="avatar">+</span>
         <strong>空位</strong>
       </button>
@@ -614,7 +639,7 @@ function seatHtml(entry, table) {
   }
 
   return `
-    <div class="${className}">
+    <div class="${className}" data-seat="${actualSeat}" data-display-seat="${displaySeat}">
       ${dealer ? `<span class="dealer">D</span>` : ""}
       <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
@@ -750,6 +775,7 @@ function adminView() {
 function render() {
   const nextTableId = state.view === "table" && state.table ? state.table.id : null;
   const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
+  const canPatchTable = Boolean(preserveScroll && $app.querySelector(".game-layout"));
   const lockedScroll = state.scrollLock && nextTableId === state.scrollLock.tableId ? state.scrollLock : null;
   const scrollX = lockedScroll ? lockedScroll.x : window.scrollX;
   const scrollY = lockedScroll ? lockedScroll.y : window.scrollY;
@@ -757,7 +783,11 @@ function render() {
   if (!state.user) {
     $app.innerHTML = authView();
   } else if (state.view === "table") {
-    $app.innerHTML = tableView();
+    if (canPatchTable) {
+      patchTableView(state.table);
+    } else {
+      $app.innerHTML = tableView();
+    }
   } else if (state.view === "admin") {
     $app.innerHTML = adminView();
   } else {
@@ -766,6 +796,80 @@ function render() {
   state.renderedTableId = nextTableId;
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
+}
+
+function patchTableView(table) {
+  syncShellChrome();
+  const root = $app.querySelector(".game-layout");
+  if (!root) {
+    $app.innerHTML = tableView();
+    return;
+  }
+
+  const title = root.querySelector(".table-toolbar strong");
+  if (title) title.textContent = table.name;
+  const meta = root.querySelector(".table-toolbar span");
+  if (meta) meta.textContent = tableMetaText(table);
+  setInnerHtml(root.querySelector(".toolbar-actions"), toolbarActionsHtml(table));
+
+  const felt = root.querySelector(".felt-table");
+  if (felt) felt.className = `felt-table seats-${table.maxSeats || 6}`;
+  setInnerHtml(root.querySelector(".board"), boardHtml(table));
+  setInnerHtml(root.querySelector(".pot"), potHtml(table));
+
+  const winner = root.querySelector(".winner-strip");
+  if (winner) {
+    const text = winnerText(table);
+    winner.classList.toggle("empty", !text);
+    if (text) {
+      winner.removeAttribute("aria-hidden");
+      winner.textContent = text;
+    } else {
+      winner.setAttribute("aria-hidden", "true");
+      winner.textContent = "等待结算";
+    }
+  }
+
+  for (const entry of seatEntries(table)) {
+    const current = root.querySelector(`[data-seat="${entry.actualSeat}"]`);
+    const next = seatHtml(entry, table).trim();
+    if (current && current.outerHTML.trim() !== next) {
+      current.outerHTML = next;
+    }
+  }
+
+  const panel = root.querySelector(".control-panel");
+  const nextPanel = table.youSeat != null ? actionPanel(table.controls || {}, table) : sitPanel(table);
+  if (panel && panel.outerHTML.trim() !== nextPanel.trim()) panel.outerHTML = nextPanel;
+  setInnerHtml(root.querySelector(".logs"), logsHtml(table));
+}
+
+function syncShellChrome() {
+  const wallet = $app.querySelector(".wallet");
+  if (wallet && state.user) {
+    setInnerHtml(wallet, `${chipStackHtml(state.user.chips, true)}<span>${escapeHtml(state.user.username)}</span>`);
+  }
+  syncToast();
+}
+
+function syncToast() {
+  const shellElement = $app.querySelector(".app-shell");
+  if (!shellElement) return;
+  const existing = shellElement.querySelector(".toast");
+  if (!state.message) {
+    if (existing) existing.remove();
+    return;
+  }
+  const html = escapeHtml(state.message);
+  if (existing) {
+    if (existing.innerHTML !== html) existing.innerHTML = html;
+  } else {
+    shellElement.insertAdjacentHTML("beforeend", `<div class="toast">${html}</div>`);
+  }
+}
+
+function setInnerHtml(element, html) {
+  if (element && element.innerHTML !== html) element.innerHTML = html;
 }
 
 function restoreScrollPosition(scrollX, scrollY) {
