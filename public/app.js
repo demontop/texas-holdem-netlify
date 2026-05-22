@@ -11,7 +11,7 @@ const state = {
   message: "",
   busy: false,
   poller: null,
-  admin: { users: [], audit: [] }
+  admin: { users: [], tables: [], audit: [] }
 };
 
 const $app = document.querySelector("#app");
@@ -282,6 +282,29 @@ async function recharge(formElement) {
   });
 }
 
+async function addBot(formElement) {
+  const form = new FormData(formElement);
+  await runBusy(async () => {
+    const result = await api("/admin/bots", {
+      method: "POST",
+      body: {
+        tableId: form.get("tableId"),
+        name: form.get("name"),
+        buyIn: Number(form.get("buyIn"))
+      }
+    });
+    state.admin = {
+      users: result.users,
+      tables: result.tables,
+      audit: result.audit
+    };
+    if (state.table && result.table && state.table.id === result.table.id) {
+      await refreshTable(true);
+    }
+    setMessage(`${result.bot.username} 已加入 ${result.table.name}`);
+  });
+}
+
 function shell(content) {
   const user = state.user;
   return `
@@ -397,7 +420,7 @@ function tableView() {
   const table = state.table;
   if (!table) return lobbyView();
   const seatCount = table.maxSeats || 6;
-  const seats = Array.from({ length: seatCount }, (_, seat) => table.seats[seat] || null);
+  const seats = seatEntries(table);
   const board = [...(table.community || [])];
   while (board.length < 5) board.push(null);
   const isSeated = table.youSeat != null;
@@ -428,7 +451,7 @@ function tableView() {
             </div>
             ${table.winners?.length ? `<div class="winner-strip">${table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")}</div>` : ""}
           </div>
-          ${seats.map((player, seat) => seatHtml(player, seat, table)).join("")}
+          ${seats.map((entry) => seatHtml(entry, table)).join("")}
         </div>
       </section>
       <aside class="side-panel">
@@ -444,17 +467,31 @@ function tableView() {
   `);
 }
 
-function seatHtml(player, seat, table) {
+function seatEntries(table) {
+  const seatCount = table.maxSeats || 6;
+  const anchor = table.youSeat == null ? 0 : table.youSeat;
+  return Array.from({ length: seatCount }, (_, displaySeat) => {
+    const actualSeat = table.youSeat == null ? displaySeat : (anchor + displaySeat) % seatCount;
+    return {
+      displaySeat,
+      actualSeat,
+      player: table.seats[actualSeat] || null
+    };
+  });
+}
+
+function seatHtml(entry, table) {
+  const { player, displaySeat, actualSeat } = entry;
   const occupied = Boolean(player);
-  const isMe = player && table.youSeat === seat;
-  const isTurn = table.currentTurnSeat === seat;
-  const dealer = table.dealerSeat === seat;
-  const className = ["seat", `seat-${seat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""].join(" ");
+  const isMe = player && table.youSeat === actualSeat;
+  const isTurn = table.currentTurnSeat === actualSeat;
+  const dealer = table.dealerSeat === actualSeat;
+  const className = ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""].join(" ");
 
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
     return `
-      <button class="${className}" ${canJoin ? `data-join-seat="${seat}"` : "disabled"}>
+      <button class="${className}" ${canJoin ? `data-join-seat="${actualSeat}"` : "disabled"}>
         <span class="avatar">+</span>
         <strong>空位</strong>
       </button>
@@ -466,7 +503,7 @@ function seatHtml(player, seat, table) {
       ${dealer ? `<span class="dealer">D</span>` : ""}
       <div class="hole-cards">${(player.hole || [null, null]).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
-        <strong>${escapeHtml(player.username)}</strong>
+        <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
         <span>${money(player.stack)}</span>
       </div>
       ${player.bet > 0 ? `<div class="seat-bet">${chipStackHtml(player.bet, true)}</div>` : ""}
@@ -527,11 +564,13 @@ function actionPanel(controls, table) {
 
 function adminView() {
   const options = state.admin.users.map((user) => `<option value="${user.id}">${escapeHtml(user.username)} · ${money(user.chips)}</option>`).join("");
+  const botTables = (state.admin.tables || []).filter((table) => ["waiting", "showdown"].includes(table.status));
+  const tableOptions = botTables.map((table) => `<option value="${table.id}">${escapeHtml(table.name)} · ${table.players}/${table.maxSeats} · ${stageLabel(table.status)}</option>`).join("");
   const rows = state.admin.users.map((user) => `
     <tr>
       <td>${escapeHtml(user.username)}</td>
       <td>${money(user.chips)}</td>
-      <td>${user.isAdmin ? "管理员" : "玩家"}</td>
+      <td>${user.isBot ? "机器人" : (user.isAdmin ? "管理员" : "玩家")}</td>
     </tr>
   `).join("");
   const audit = state.admin.audit.map((item) => `<p>${escapeHtml(auditText(item))}</p>`).join("");
@@ -543,6 +582,7 @@ function adminView() {
           <h1>管理员后台</h1>
           <button class="ghost" data-action="back-lobby">返回</button>
         </div>
+        <h2>筹码充值</h2>
         <form class="recharge-form" data-form="recharge">
           <label>
             <span>用户</span>
@@ -560,13 +600,31 @@ function adminView() {
         </form>
       </section>
       <section class="admin-card">
+        <h2>机器人陪玩</h2>
+        <form class="recharge-form" data-form="add-bot">
+          <label>
+            <span>牌桌</span>
+            <select name="tableId" ${tableOptions ? "" : "disabled"}>${tableOptions || `<option>暂无可加入牌桌</option>`}</select>
+          </label>
+          <label>
+            <span>机器人名称</span>
+            <input name="name" maxlength="18" placeholder="自动生成" />
+          </label>
+          <label>
+            <span>带入筹码</span>
+            <input name="buyIn" type="number" step="100" value="1000" required />
+          </label>
+          <button class="primary" type="submit" ${tableOptions ? "" : "disabled"}>添加机器人</button>
+        </form>
+      </section>
+      <section class="admin-card">
         <h2>用户筹码</h2>
         <table>
           <thead><tr><th>用户</th><th>钱包</th><th>角色</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </section>
-      <section class="admin-card">
+      <section class="admin-card audit-card">
         <h2>审计</h2>
         <div class="logs">${audit || "<p>暂无记录</p>"}</div>
       </section>
@@ -606,6 +664,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "auth") submitAuth(form);
   if (form.dataset.form === "create-table") createTable(form);
   if (form.dataset.form === "recharge") recharge(form);
+  if (form.dataset.form === "add-bot") addBot(form);
 });
 
 document.addEventListener("click", async (event) => {

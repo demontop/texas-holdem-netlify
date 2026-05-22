@@ -98,6 +98,11 @@ function normalizeDb(db) {
     table.seats = table.seats || Array.from({ length: table.maxSeats }, () => null);
     table.logs = table.logs || [];
     table.winners = table.winners || [];
+    for (const player of table.seats) {
+      if (player && db.users[player.userId]) {
+        player.isBot = Boolean(db.users[player.userId].isBot);
+      }
+    }
   }
 
   return db;
@@ -196,6 +201,7 @@ function userPublic(user) {
     username: user.username,
     chips: user.chips,
     isAdmin: Boolean(user.isAdmin),
+    isBot: Boolean(user.isBot),
     createdAt: user.createdAt
   };
 }
@@ -663,6 +669,7 @@ function publicTable(table, viewer) {
         seat: player.seat,
         userId: player.userId,
         username: player.username,
+        isBot: Boolean(player.isBot),
         stack: player.stack,
         bet: player.bet,
         contributed: player.contributed,
@@ -687,6 +694,72 @@ function requireSeated(table, user) {
   const player = table.seats.find((seat) => seat && seat.userId === user.id);
   if (!player) throw new HttpError(403, "你还没有坐下");
   return player;
+}
+
+function createSeatRecord(user, seat, buyIn) {
+  return {
+    seat,
+    userId: user.id,
+    username: user.username,
+    isBot: Boolean(user.isBot),
+    stack: buyIn,
+    hole: [],
+    folded: false,
+    allIn: false,
+    inHand: false,
+    bet: 0,
+    contributed: 0,
+    acted: false,
+    lastAction: "入座"
+  };
+}
+
+function sitUserAtTable(table, user, requestedBuyIn, requestedSeat = null) {
+  const existing = table.seats.find((seat) => seat && seat.userId === user.id);
+  if (existing) return existing;
+
+  const buyIn = clampInt(requestedBuyIn || table.bigBlind * 50, table.bigBlind * 10, 1000000);
+  if (user.chips < buyIn) throw new HttpError(400, "钱包筹码不足");
+  const preferredSeat = requestedSeat == null ? null : clampInt(requestedSeat, 0, table.maxSeats - 1);
+  const seat = preferredSeat != null && !table.seats[preferredSeat]
+    ? preferredSeat
+    : table.seats.findIndex((value) => !value);
+  if (seat < 0) throw new HttpError(400, "牌桌已满");
+
+  user.chips -= buyIn;
+  table.seats[seat] = createSeatRecord(user, seat, buyIn);
+  addLog(table, `${user.username}${user.isBot ? " 机器人" : ""} 带入 ${buyIn} 筹码入座`);
+  touchTable(table);
+  return table.seats[seat];
+}
+
+function createBotUser(db, name, chips) {
+  const cleanedName = cleanUsername(name || "");
+  const baseName = cleanedName || randomBotName();
+  let username = baseName;
+  let suffix = 1;
+  while (findUserByUsername(db, username)) {
+    username = `${baseName.slice(0, 14)}_${suffix}`;
+    suffix += 1;
+  }
+  const { salt, hash } = hashPassword(randomId(16));
+  const bot = {
+    id: randomId(10),
+    username,
+    salt,
+    passwordHash: hash,
+    chips,
+    isAdmin: false,
+    isBot: true,
+    createdAt: nowIso()
+  };
+  db.users[bot.id] = bot;
+  return bot;
+}
+
+function randomBotName() {
+  const names = ["冷静河牌", "松凶阿K", "慢打师傅", "筹码猎手", "翻牌旅人", "小盲骑士", "坚果同花", "底池管家"];
+  return names[crypto.randomInt(names.length)];
 }
 
 function createTable(owner, body) {
@@ -811,6 +884,54 @@ function handleAction(table, user, body) {
   maybeAdvance(table, player.seat);
 }
 
+function processBotTurns(table) {
+  let changed = false;
+  let guard = 0;
+  while (ACTIVE_STAGES.has(table.status) && guard < 36) {
+    guard += 1;
+    const player = table.seats[table.currentTurnSeat];
+    if (!player || !player.isBot) break;
+
+    try {
+      handleAction(table, { id: player.userId }, botDecision(table, player));
+    } catch (error) {
+      addLog(table, `${player.username} 机器人暂停：${error.message}`);
+      break;
+    }
+    changed = true;
+  }
+  return changed;
+}
+
+function botDecision(table, player) {
+  const toCall = Math.max(0, table.currentBet - player.bet);
+  const maxTarget = player.bet + player.stack;
+  const minTarget = table.currentBet === 0 ? table.bigBlind : table.currentBet + table.minRaise;
+  const roll = crypto.randomInt(100);
+
+  if (toCall <= 0) {
+    if (player.stack > table.bigBlind * 4 && roll < 15) {
+      return { action: "raise", amount: Math.min(maxTarget, minTarget) };
+    }
+    return { action: "check" };
+  }
+
+  if (toCall >= player.stack) {
+    return roll < 58 ? { action: "allin" } : { action: "fold" };
+  }
+
+  const pressure = toCall / Math.max(player.stack, 1);
+  if (pressure > 0.36 && roll < 72) return { action: "fold" };
+  if (pressure > 0.2 && roll < 34) return { action: "fold" };
+
+  if (roll > 86 && maxTarget > minTarget) {
+    const target = Math.min(maxTarget, minTarget + table.bigBlind * crypto.randomInt(1, 4));
+    return { action: "raise", amount: target };
+  }
+
+  return { action: "call" };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return json(204, {});
 
@@ -873,6 +994,7 @@ exports.handler = async (event) => {
         requireAdmin(db, event);
         return json(200, {
           users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
+          tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
           audit: db.audit.slice(0, 80)
         });
       }
@@ -900,6 +1022,36 @@ exports.handler = async (event) => {
         });
         return json(200, result);
       }
+
+      if (method === "POST" && segments[1] === "bots") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          const table = getTableOrThrow(db, body.tableId);
+          ensureWaitingForSeatChange(table);
+          const buyIn = clampInt(body.buyIn || table.bigBlind * 50, table.bigBlind * 10, 1000000);
+          const bot = createBotUser(db, body.name, Math.max(buyIn, 1000000));
+          sitUserAtTable(table, bot, buyIn, body.seat == null ? null : Number(body.seat));
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: "add_bot",
+            targetId: bot.id,
+            target: bot.username,
+            tableId: table.id,
+            note: `${table.name} · 带入 ${buyIn}`
+          });
+          db.audit = db.audit.slice(0, 300);
+          return {
+            bot: userPublic(bot),
+            table: tableSummary(table),
+            users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
+            tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
+            audit: db.audit.slice(0, 80)
+          };
+        });
+        return json(200, result);
+      }
     }
 
     if (method === "GET" && segments[0] === "lobby") {
@@ -923,10 +1075,14 @@ exports.handler = async (event) => {
       }
 
       if (method === "GET" && segments[1]) {
-        const db = await readDb();
-        const user = requireUser(db, event);
-        const table = getTableOrThrow(db, segments[1]);
-        return json(200, { user: userPublic(user), table: publicTable(table, user) });
+        const result = await withDb((db) => {
+          const user = requireUser(db, event);
+          const table = getTableOrThrow(db, segments[1]);
+          const changed = processBotTurns(table);
+          if (changed) touchTable(table);
+          return { user: userPublic(user), table: publicTable(table, user) };
+        });
+        return json(200, result);
       }
 
       if (method === "POST" && segments[1] && segments[2] === "join") {
@@ -934,32 +1090,7 @@ exports.handler = async (event) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
           ensureWaitingForSeatChange(table);
-          const existing = table.seats.find((seat) => seat && seat.userId === user.id);
-          if (existing) return { user: userPublic(user), table: publicTable(table, user) };
-          const buyIn = clampInt(body.buyIn || table.bigBlind * 50, table.bigBlind * 10, 1000000);
-          if (user.chips < buyIn) throw new HttpError(400, "钱包筹码不足");
-          const requested = body.seat == null ? null : clampInt(body.seat, 0, table.maxSeats - 1);
-          const seat = requested != null && !table.seats[requested]
-            ? requested
-            : table.seats.findIndex((value) => !value);
-          if (seat < 0) throw new HttpError(400, "牌桌已满");
-          user.chips -= buyIn;
-          table.seats[seat] = {
-            seat,
-            userId: user.id,
-            username: user.username,
-            stack: buyIn,
-            hole: [],
-            folded: false,
-            allIn: false,
-            inHand: false,
-            bet: 0,
-            contributed: 0,
-            acted: false,
-            lastAction: "入座"
-          };
-          addLog(table, `${user.username} 带入 ${buyIn} 筹码入座`);
-          touchTable(table);
+          sitUserAtTable(table, user, body.buyIn, body.seat == null ? null : Number(body.seat));
           return { user: userPublic(user), table: publicTable(table, user) };
         });
         return json(200, result);
@@ -988,6 +1119,7 @@ exports.handler = async (event) => {
           requireSeated(table, user);
           if (ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "手牌已经开始");
           startHand(table);
+          processBotTurns(table);
           touchTable(table);
           return { table: publicTable(table, user) };
         });
@@ -999,6 +1131,7 @@ exports.handler = async (event) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
           handleAction(table, user, body);
+          processBotTurns(table);
           touchTable(table);
           return { table: publicTable(table, user) };
         });
