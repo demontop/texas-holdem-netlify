@@ -48,7 +48,7 @@ function getBlobsModule() {
 }
 
 async function configureBlobs(event) {
-  if (process.env.NETLIFY_BLOBS_CONTEXT || !event.blobs) return;
+  if (!event.blobs) return;
   const mod = await getBlobsModule();
   if (typeof mod.connectLambda === "function") mod.connectLambda(event);
 }
