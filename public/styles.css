@@ -444,15 +444,17 @@ h2 {
 
 .card {
   position: relative;
-  display: grid;
-  place-items: center;
+  display: block;
   width: clamp(50px, 6vw, 78px);
   aspect-ratio: 0.7;
-  border-radius: 8px;
-  background:
-    linear-gradient(140deg, rgba(255, 255, 255, 0.96), rgba(246, 238, 218, 0.98));
-  color: #111;
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  border-radius: 7px;
+  background: #fbf7eb;
+  color: #151515;
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.32),
+    0 2px 0 rgba(255, 255, 255, 0.35) inset,
+    0 0 0 1px rgba(20, 20, 20, 0.13) inset;
   font-weight: 900;
 }
 
@@ -461,33 +463,220 @@ h2 {
 }
 
 .card.red {
-  color: #b4142a;
+  color: #ba1c31;
 }
 
-.card .rank {
-  font-size: clamp(20px, 2.3vw, 32px);
+.card-face {
+  background:
+    radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.95), transparent 22%),
+    linear-gradient(150deg, #fffdf7, #eee3cf);
 }
 
-.card .suit {
+.card-paper {
   position: absolute;
-  bottom: 19%;
-  font-size: clamp(18px, 2vw, 26px);
+  inset: 4px;
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.018) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.28) 0 1px, transparent 1px 6px);
+  box-shadow: 0 0 0 1px rgba(150, 112, 70, 0.12) inset;
+  pointer-events: none;
 }
 
-.card .corner {
+.card-index {
   position: absolute;
-  top: 7px;
-  left: 7px;
-  font-size: 11px;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  width: 18px;
+  line-height: 0.88;
+  letter-spacing: 0;
+}
+
+.card-index b {
+  font-size: clamp(10px, 1.15vw, 14px);
+}
+
+.card-index i {
+  font-style: normal;
+  font-size: clamp(10px, 1.05vw, 13px);
+}
+
+.card-index.top {
+  top: 6px;
+  left: 5px;
+}
+
+.card-index.bottom {
+  right: 5px;
+  bottom: 6px;
+  transform: rotate(180deg);
+}
+
+.pip-grid {
+  position: absolute;
+  inset: 20% 17% 18%;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(5, 1fr);
+  align-items: center;
+  justify-items: center;
+}
+
+.pip {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: clamp(13px, 2vw, 23px);
   line-height: 1;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.35));
+}
+
+.pip.hero {
+  font-size: clamp(27px, 4vw, 46px);
+}
+
+.pip.invert {
+  transform: rotate(180deg);
+}
+
+.face-art {
+  position: absolute;
+  inset: 19% 18%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(215, 173, 89, 0.22), rgba(255, 255, 255, 0.05)),
+    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.055) 0 2px, transparent 2px 6px);
+  box-shadow: 0 0 0 1px currentColor inset, 0 6px 14px rgba(0, 0, 0, 0.15) inset;
+}
+
+.face-title {
+  position: absolute;
+  top: 6px;
+  font-size: 7px;
+  color: rgba(30, 30, 30, 0.58);
+  letter-spacing: 0;
+}
+
+.face-body {
+  display: grid;
+  place-items: center;
+  width: 42%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.62);
+  font-size: clamp(18px, 2.6vw, 31px);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.face-crown {
+  position: absolute;
+  top: 18%;
+  font-size: clamp(15px, 2vw, 26px);
+}
+
+.face-suit {
+  position: absolute;
+  bottom: 12%;
+  transform: rotate(180deg);
+  font-size: clamp(15px, 2vw, 26px);
+}
+
+.card.small .card-index b {
+  font-size: 8px;
+}
+
+.card.small .card-index i {
+  font-size: 8px;
+}
+
+.card.small .pip-grid,
+.card.small .face-title {
+  display: none;
+}
+
+.card.small .face-art {
+  inset: 26% 24%;
+}
+
+.card.small .face-body {
+  font-size: 16px;
+}
+
+.small-center {
+  display: none;
+}
+
+.card.small .small-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 21px;
+  opacity: 0.88;
+}
+
+.card.small.rank-a .pip-grid {
+  display: grid;
+  inset: 31% 28%;
+}
+
+.card.small.rank-a .pip:not(.hero) {
+  display: none;
+}
+
+.card.small.rank-a .pip.hero {
+  font-size: 21px;
+}
+
+.card.small.rank-a .small-center {
+  display: none;
 }
 
 .card-back {
   overflow: hidden;
   background:
-    linear-gradient(45deg, rgba(255,255,255,0.18) 25%, transparent 25% 50%, rgba(255,255,255,0.18) 50% 75%, transparent 75%) 0 0 / 14px 14px,
-    linear-gradient(135deg, #8f1f2d, #1d3f73);
-  border: 3px solid #efe3ca;
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.2), transparent 25%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 3px, transparent 3px 8px),
+    linear-gradient(135deg, #7e1830, #112f5d 58%, #091426);
+  border: 3px solid #efe8d8;
+}
+
+.back-frame {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 5px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.1) inset;
+}
+
+.back-frame::before,
+.back-frame::after {
+  content: "";
+  position: absolute;
+  inset: 16%;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 50%;
+}
+
+.back-frame::after {
+  inset: 30%;
+}
+
+.back-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: clamp(12px, 1.5vw, 18px);
+  font-weight: 900;
 }
 
 .pot {
@@ -497,59 +686,129 @@ h2 {
   color: var(--muted);
 }
 
-.chips {
-  position: relative;
-  display: inline-grid;
-  grid-template-columns: auto auto;
+.chip-stack {
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-width: max-content;
   color: var(--text);
 }
 
-.chips span {
-  grid-area: 1 / 1;
-  width: 42px;
-  height: 14px;
+.chip-pile {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 32px;
+}
+
+.chip {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--i) * 4px);
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 16px;
   border-radius: 50%;
-  transform: translateY(calc(var(--i) * -5px));
   background:
-    repeating-linear-gradient(90deg, #fff 0 5px, transparent 5px 10px),
-    radial-gradient(circle at 35% 35%, #f35c5f, #8b1625 64%);
-  border: 2px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.32);
+    repeating-conic-gradient(from 8deg, rgba(255,255,255,0.86) 0 10deg, transparent 10deg 31deg),
+    radial-gradient(ellipse at 50% 35%, var(--chip-hi), var(--chip-main) 58%, var(--chip-edge));
+  border: 2px solid rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 4px 6px rgba(0, 0, 0, 0.28),
+    0 -2px 0 rgba(255, 255, 255, 0.22) inset,
+    0 2px 0 rgba(0, 0, 0, 0.22) inset;
 }
 
-.chips span:nth-child(2) {
-  background:
-    repeating-linear-gradient(90deg, #fff 0 5px, transparent 5px 10px),
-    radial-gradient(circle at 35% 35%, #4f84d8, #17386c 64%);
+.chip i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 11px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.88);
+  color: #161616;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 
-.chips span:nth-child(3) {
-  background:
-    repeating-linear-gradient(90deg, #1c1c1c 0 5px, transparent 5px 10px),
-    radial-gradient(circle at 35% 35%, #f7e08a, #ad7b19 64%);
+.chip-1 {
+  --chip-hi: #f4f4f1;
+  --chip-main: #bfc4bd;
+  --chip-edge: #6b716c;
 }
 
-.chips span:nth-child(4) {
-  background:
-    repeating-linear-gradient(90deg, #fff 0 5px, transparent 5px 10px),
-    radial-gradient(circle at 35% 35%, #5dd28a, #146a3a 64%);
+.chip-5 {
+  --chip-hi: #ff7f83;
+  --chip-main: #c52d3c;
+  --chip-edge: #6d1520;
 }
 
-.chips b {
-  grid-column: 2;
-  margin-left: 2px;
+.chip-10 {
+  --chip-hi: #72a8ff;
+  --chip-main: #235aa5;
+  --chip-edge: #102d58;
+}
+
+.chip-25 {
+  --chip-hi: #6ee4a2;
+  --chip-main: #158353;
+  --chip-edge: #073f2c;
+}
+
+.chip-100 {
+  --chip-hi: #1c1d22;
+  --chip-main: #050608;
+  --chip-edge: #000;
+}
+
+.chip-500 {
+  --chip-hi: #d285ff;
+  --chip-main: #68309a;
+  --chip-edge: #2d1448;
+}
+
+.chip-1000 {
+  --chip-hi: #ffde7c;
+  --chip-main: #c08319;
+  --chip-edge: #6d4104;
+}
+
+.chip-5000 {
+  --chip-hi: #ff9b5f;
+  --chip-main: #b84b18;
+  --chip-edge: #612107;
+}
+
+.chip-stack b {
   font-size: 14px;
 }
 
-.chips.compact span {
-  width: 31px;
-  height: 11px;
+.chip-stack.compact {
+  gap: 5px;
 }
 
-.chips.compact b {
+.chip-stack.compact .chip-pile {
+  width: 36px;
+  height: 25px;
+}
+
+.chip-stack.compact .chip {
+  width: 34px;
+  height: 12px;
+  bottom: calc(var(--i) * 3px);
+}
+
+.chip-stack.compact .chip i {
+  width: 17px;
+  height: 8px;
+  font-size: 6px;
+}
+
+.chip-stack.compact b {
   font-size: 12px;
 }
 
@@ -915,10 +1174,14 @@ th {
     width: 32px;
   }
 
-  .card .corner {
+  .card-index.top {
     top: 5px;
-    left: 5px;
-    font-size: 9px;
+    left: 4px;
+  }
+
+  .card-index.bottom {
+    right: 4px;
+    bottom: 5px;
   }
 
   .table-center {

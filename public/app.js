@@ -41,26 +41,89 @@ function suitMeta(card) {
     C: ["♣", "black"]
   };
   const [suit, color] = suitMap[card[1]] || ["", "black"];
-  return { rank: rankMap[card[0]] || card[0], suit, color };
+  return { rawRank: card[0], rank: rankMap[card[0]] || card[0], suit, color };
 }
 
 function cardHtml(card, small = false) {
   if (!card) {
-    return `<div class="card card-back ${small ? "small" : ""}" aria-label="暗牌"></div>`;
+    return `
+      <div class="card card-back ${small ? "small" : ""}" aria-label="暗牌">
+        <span class="back-frame"></span>
+        <span class="back-mark">TH</span>
+      </div>
+    `;
   }
   const meta = suitMeta(card);
+  const isFace = ["J", "Q", "K"].includes(meta.rawRank);
+  const pips = isFace ? faceCardHtml(meta) : pipCardHtml(meta);
   return `
-    <div class="card ${meta.color} ${small ? "small" : ""}">
-      <span class="rank">${meta.rank}</span>
-      <span class="suit">${meta.suit}</span>
-      <span class="corner">${meta.rank}${meta.suit}</span>
+    <div class="card card-face ${meta.color} rank-${meta.rawRank.toLowerCase()} ${isFace ? "face" : ""} ${small ? "small" : ""}">
+      <span class="card-index top"><b>${meta.rank}</b><i>${meta.suit}</i></span>
+      ${pips}
+      <span class="small-center">${meta.suit}</span>
+      <span class="card-index bottom"><b>${meta.rank}</b><i>${meta.suit}</i></span>
+    </div>
+  `;
+}
+
+function pipCardHtml(meta) {
+  const layouts = {
+    A: [[3, 2, "hero"]],
+    "2": [[1, 2], [5, 2, "invert"]],
+    "3": [[1, 2], [3, 2], [5, 2, "invert"]],
+    "4": [[1, 1], [1, 3], [5, 1, "invert"], [5, 3, "invert"]],
+    "5": [[1, 1], [1, 3], [3, 2], [5, 1, "invert"], [5, 3, "invert"]],
+    "6": [[1, 1], [1, 3], [3, 1], [3, 3], [5, 1, "invert"], [5, 3, "invert"]],
+    "7": [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3], [5, 1, "invert"], [5, 3, "invert"]],
+    "8": [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3], [4, 2, "invert"], [5, 1, "invert"], [5, 3, "invert"]],
+    "9": [[1, 1], [1, 3], [2, 1], [2, 3], [3, 2], [4, 1, "invert"], [4, 3, "invert"], [5, 1, "invert"], [5, 3, "invert"]],
+    T: [[1, 1], [1, 3], [2, 1], [2, 3], [2, 2], [4, 1, "invert"], [4, 3, "invert"], [4, 2, "invert"], [5, 1, "invert"], [5, 3, "invert"]]
+  };
+  const pips = layouts[meta.rawRank] || [];
+  return `
+    <span class="card-paper"></span>
+    <div class="pip-grid">
+      ${pips.map(([row, column, mode]) => `<span class="pip ${mode || ""}" style="grid-row:${row};grid-column:${column}">${meta.suit}</span>`).join("")}
+    </div>
+  `;
+}
+
+function faceCardHtml(meta) {
+  const titles = { J: "JACK", Q: "QUEEN", K: "KING" };
+  return `
+    <span class="card-paper"></span>
+    <div class="face-art">
+      <span class="face-title">${titles[meta.rawRank]}</span>
+      <span class="face-crown">${meta.suit}</span>
+      <span class="face-body">${meta.rawRank}</span>
+      <span class="face-suit">${meta.suit}</span>
     </div>
   `;
 }
 
 function chipStackHtml(amount, compact = false) {
-  const chips = [0, 1, 2, 3].map((index) => `<span style="--i:${index}"></span>`).join("");
-  return `<div class="chips ${compact ? "compact" : ""}">${chips}<b>${money(amount)}</b></div>`;
+  const chips = chipBreakdown(amount, compact ? 4 : 5).reverse().map((denom, index) => {
+    return `<span class="chip chip-${denom}" style="--i:${index}"><i>${chipLabel(denom)}</i></span>`;
+  }).join("");
+  return `<div class="chip-stack ${compact ? "compact" : ""}"><span class="chip-pile" aria-hidden="true">${chips}</span><b>${money(amount)}</b></div>`;
+}
+
+function chipBreakdown(amount, maxChips) {
+  let remaining = Math.max(0, Math.floor(Number(amount) || 0));
+  const denoms = [5000, 1000, 500, 100, 25, 10, 5, 1];
+  const chips = [];
+  for (const denom of denoms) {
+    while (remaining >= denom && chips.length < maxChips) {
+      chips.push(denom);
+      remaining -= denom;
+    }
+  }
+  if (!chips.length) chips.push(1);
+  return chips;
+}
+
+function chipLabel(denom) {
+  return denom >= 1000 ? `${denom / 1000}K` : String(denom);
 }
 
 function setMessage(text) {
