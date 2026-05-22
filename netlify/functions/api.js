@@ -104,7 +104,6 @@ function normalizeDb(db) {
       }
     }
   }
-
   return db;
 }
 
@@ -690,6 +689,27 @@ function getTableOrThrow(db, id) {
   return table;
 }
 
+function cleanupEmptyTables(db) {
+  for (const [id, table] of Object.entries(db.tables || {})) {
+    if (seatedPlayers(table).length === 0) delete db.tables[id];
+  }
+}
+
+function findPlayerTable(db, userId) {
+  for (const table of Object.values(db.tables || {})) {
+    const player = table.seats.find((seat) => seat && seat.userId === userId);
+    if (player) return table;
+  }
+  return null;
+}
+
+function assertPlayerCanJoinTable(db, table, user) {
+  const existingTable = findPlayerTable(db, user.id);
+  if (existingTable && existingTable.id !== table.id) {
+    throw new HttpError(409, `${user.username} 已在「${existingTable.name}」入座，离桌后才能加入其他牌桌`);
+  }
+}
+
 function requireSeated(table, user) {
   const player = table.seats.find((seat) => seat && seat.userId === user.id);
   if (!player) throw new HttpError(403, "你还没有坐下");
@@ -714,9 +734,10 @@ function createSeatRecord(user, seat, buyIn) {
   };
 }
 
-function sitUserAtTable(table, user, requestedBuyIn, requestedSeat = null) {
+function sitUserAtTable(db, table, user, requestedBuyIn, requestedSeat = null) {
   const existing = table.seats.find((seat) => seat && seat.userId === user.id);
   if (existing) return existing;
+  assertPlayerCanJoinTable(db, table, user);
 
   const buyIn = clampInt(requestedBuyIn || table.bigBlind * 50, table.bigBlind * 10, 1000000);
   if (user.chips < buyIn) throw new HttpError(400, "钱包筹码不足");
@@ -992,6 +1013,8 @@ exports.handler = async (event) => {
       if (method === "GET" && segments[1] === "users") {
         const db = await readDb();
         requireAdmin(db, event);
+        cleanupEmptyTables(db);
+        await writeDb(db);
         return json(200, {
           users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
           tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
@@ -1030,7 +1053,7 @@ exports.handler = async (event) => {
           ensureWaitingForSeatChange(table);
           const buyIn = clampInt(body.buyIn || table.bigBlind * 50, table.bigBlind * 10, 1000000);
           const bot = createBotUser(db, body.name, Math.max(buyIn, 1000000));
-          sitUserAtTable(table, bot, buyIn, body.seat == null ? null : Number(body.seat));
+          sitUserAtTable(db, table, bot, buyIn, body.seat == null ? null : Number(body.seat));
           db.audit.unshift({
             at: nowIso(),
             actorId: admin.id,
@@ -1057,6 +1080,8 @@ exports.handler = async (event) => {
     if (method === "GET" && segments[0] === "lobby") {
       const db = await readDb();
       const user = requireUser(db, event);
+      cleanupEmptyTables(db);
+      await writeDb(db);
       return json(200, {
         user: userPublic(user),
         tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
@@ -1069,7 +1094,8 @@ exports.handler = async (event) => {
           const user = requireUser(db, event);
           const table = createTable(user, body);
           db.tables[table.id] = table;
-          return { table: publicTable(table, user) };
+          sitUserAtTable(db, table, user, body.buyIn || table.bigBlind * 50, body.seat == null ? null : Number(body.seat));
+          return { user: userPublic(user), table: publicTable(table, user) };
         });
         return json(201, result);
       }
@@ -1078,6 +1104,10 @@ exports.handler = async (event) => {
         const result = await withDb((db) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
+          if (seatedPlayers(table).length === 0) {
+            delete db.tables[table.id];
+            throw new HttpError(404, "牌桌已解散");
+          }
           const changed = processBotTurns(table);
           if (changed) touchTable(table);
           return { user: userPublic(user), table: publicTable(table, user) };
@@ -1090,7 +1120,7 @@ exports.handler = async (event) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
           ensureWaitingForSeatChange(table);
-          sitUserAtTable(table, user, body.buyIn, body.seat == null ? null : Number(body.seat));
+          sitUserAtTable(db, table, user, body.buyIn, body.seat == null ? null : Number(body.seat));
           return { user: userPublic(user), table: publicTable(table, user) };
         });
         return json(200, result);

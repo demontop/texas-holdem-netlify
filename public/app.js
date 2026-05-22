@@ -224,6 +224,7 @@ async function loadLobby(silent = false) {
 
 async function createTable(formElement) {
   const form = new FormData(formElement);
+  const buyInInput = document.querySelector("[data-buyin]");
   await runBusy(async () => {
     const result = await api("/tables", {
       method: "POST",
@@ -231,9 +232,11 @@ async function createTable(formElement) {
         name: form.get("name"),
         smallBlind: Number(form.get("smallBlind")),
         bigBlind: Number(form.get("bigBlind")),
-        maxSeats: Number(form.get("maxSeats"))
+        maxSeats: Number(form.get("maxSeats")),
+        buyIn: Number(buyInInput?.value || 1000)
       }
     });
+    state.user = result.user || state.user;
     state.table = result.table;
     state.view = "table";
     startPolling();
