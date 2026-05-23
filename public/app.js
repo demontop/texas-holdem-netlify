@@ -17,6 +17,7 @@ const state = {
   polling: false,
   tableRequestSeq: 0,
   renderedTableId: null,
+  animationTable: null,
   scrollLock: null,
   raiseDrawerOpen: false,
   admin: { users: [], tables: [], audit: [] }
@@ -1017,6 +1018,7 @@ function adminView() {
 }
 
 function render() {
+  const previousAnimationTable = state.animationTable;
   if (!state.table?.controls?.canAct) state.raiseDrawerOpen = false;
   const nextTableId = state.view === "table" && state.table ? state.table.id : null;
   const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
@@ -1042,6 +1044,8 @@ function render() {
   if (nextTableId) syncRaiseControls($app);
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
+  scheduleTableAnimations(previousAnimationTable, state.view === "table" ? state.table : null);
+  state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
 }
 
 function patchTableView(table) {
@@ -1117,6 +1121,190 @@ function patchSeat(root, entry, table) {
   }
   const nextContent = seatContentHtml(entry, table).trim();
   if (seat.innerHTML.trim() !== nextContent) seat.innerHTML = nextContent;
+}
+
+function snapshotTable(table) {
+  if (!table) return null;
+  return JSON.parse(JSON.stringify({
+    id: table.id,
+    status: table.status,
+    handNo: table.handNo || 0,
+    revision: table.revision || 0,
+    pot: table.pot || 0,
+    currentTurnSeat: table.currentTurnSeat,
+    community: table.community || [],
+    winners: table.winners || [],
+    seats: (table.seats || []).map((player) => player ? {
+      seat: player.seat,
+      userId: player.userId,
+      username: player.username,
+      bet: player.bet || 0,
+      contributed: player.contributed || 0,
+      stack: player.stack || 0,
+      inHand: Boolean(player.inHand),
+      folded: Boolean(player.folded),
+      allIn: Boolean(player.allIn),
+      lastAction: player.lastAction || "",
+      holeCount: (player.hole || []).length
+    } : null)
+  }));
+}
+
+function scheduleTableAnimations(previous, next) {
+  if (!next) return;
+  window.requestAnimationFrame(() => runTableAnimations(previous, next));
+}
+
+function runTableAnimations(previous, next) {
+  const root = document.querySelector(".game-layout");
+  if (!root || !next || !previous || previous.id !== next.id) return;
+  if (Number(next.revision || 0) <= Number(previous.revision || 0)) return;
+
+  const handStarted = Number(next.handNo || 0) > Number(previous.handNo || 0);
+  if (handStarted && next.controls?.activeHand) {
+    animateHandStart(root, next);
+  }
+
+  animateNewBoardCards(root, previous, next);
+  animateBetChanges(root, previous, next);
+  animateTurnChange(root, previous, next);
+  animateShowdown(root, previous, next);
+}
+
+function animateHandStart(root, table) {
+  addTransientClass(root.querySelector(".felt-table"), "hand-start-flash", 900);
+  (table.seats || []).forEach((player) => {
+    if (!player || !player.inHand) return;
+    const target = root.querySelector(`[data-seat="${player.seat}"] .hole-cards`) || root.querySelector(`[data-seat="${player.seat}"]`);
+    if (!target) return;
+    animateFlyingCard(root, target, { delay: 80 + player.seat * 90, small: player.seat !== table.youSeat });
+    animateFlyingCard(root, target, { delay: 210 + player.seat * 90, small: player.seat !== table.youSeat });
+  });
+}
+
+function animateNewBoardCards(root, previous, table) {
+  const oldCards = previous.community || [];
+  const newCards = table.community || [];
+  newCards.forEach((card, index) => {
+    if (!card || oldCards[index] === card) return;
+    const slot = root.querySelector(`[data-board-card="${index}"]`);
+    if (!slot) return;
+    addTransientClass(slot, "board-card-reveal", 760);
+    const cardElement = slot.querySelector(".card");
+    addTransientClass(cardElement, "card-just-revealed", 760);
+    animateFlyingCard(root, slot, { delay: index * 70, face: true });
+  });
+}
+
+function animateBetChanges(root, previous, table) {
+  (table.seats || []).forEach((player, index) => {
+    if (!player) return;
+    const oldPlayer = (previous.seats || [])[index];
+    if (!oldPlayer || oldPlayer.userId !== player.userId) return;
+    const contributedDelta = Number(player.contributed || 0) - Number(oldPlayer.contributed || 0);
+    const betDelta = Number(player.bet || 0) - Number(oldPlayer.bet || 0);
+    const amount = Math.max(contributedDelta, betDelta, 0);
+    if (amount <= 0) return;
+    const seat = root.querySelector(`[data-seat="${player.seat}"]`);
+    const pot = root.querySelector(".pot");
+    if (!seat || !pot) return;
+    animateChipFlight(seat, pot, amount);
+    addTransientClass(seat.querySelector(".seat-bet"), "bet-pop", 720);
+    addTransientClass(pot, "pot-pop", 720);
+  });
+
+  if (Number(table.pot || 0) !== Number(previous.pot || 0)) {
+    addTransientClass(root.querySelector(".pot"), "pot-pop", 720);
+  }
+}
+
+function animateTurnChange(root, previous, table) {
+  if (previous.currentTurnSeat === table.currentTurnSeat || table.currentTurnSeat == null) return;
+  const seat = root.querySelector(`[data-seat="${table.currentTurnSeat}"]`);
+  addTransientClass(seat, "turn-change", 900);
+  const status = root.querySelector(".action-status");
+  addTransientClass(status, "action-status-pop", 720);
+}
+
+function animateShowdown(root, previous, table) {
+  const becameShowdown = previous.status !== "showdown" && table.status === "showdown";
+  const newWinnerText = (table.winners || []).map((winner) => `${winner.userId}:${winner.amount}`).join("|");
+  const oldWinnerText = (previous.winners || []).map((winner) => `${winner.userId}:${winner.amount}`).join("|");
+  if (!becameShowdown && newWinnerText === oldWinnerText) return;
+
+  const winnerStrip = root.querySelector(".winner-strip");
+  addTransientClass(winnerStrip, "winner-pop", 1300);
+  addTransientClass(root.querySelector(".felt-table"), "showdown-flash", 1200);
+
+  const pot = root.querySelector(".pot");
+  for (const winner of table.winners || []) {
+    const seat = (table.seats || []).find((player) => player && player.userId === winner.userId);
+    const target = seat ? root.querySelector(`[data-seat="${seat.seat}"]`) : winnerStrip;
+    if (pot && target) animateChipFlight(pot, target, winner.amount || 0, { reverse: true, count: 5 });
+  }
+}
+
+function animateFlyingCard(root, target, options = {}) {
+  const source = root.querySelector(".table-toolbar") || root.querySelector(".felt-table");
+  const sourceRect = source.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const width = options.small ? 34 : 58;
+  const height = width * 1.42;
+  const endX = targetRect.left + targetRect.width / 2 - width / 2;
+  const endY = targetRect.top + targetRect.height / 2 - height / 2;
+  const startX = sourceRect.left + sourceRect.width / 2 - width / 2;
+  const startY = sourceRect.top + sourceRect.height / 2 - height / 2;
+  const card = document.createElement("div");
+  card.className = `fx-card-flight ${options.face ? "face-up" : "card-back"}`;
+  card.style.left = `${endX}px`;
+  card.style.top = `${endY}px`;
+  card.style.width = `${width}px`;
+  card.style.height = `${height}px`;
+  card.style.setProperty("--from-x", `${startX - endX}px`);
+  card.style.setProperty("--from-y", `${startY - endY}px`);
+  card.style.animationDelay = `${options.delay || 0}ms`;
+  card.innerHTML = `<span></span>`;
+  document.body.appendChild(card);
+  removeAfterAnimation(card, 900 + (options.delay || 0));
+}
+
+function animateChipFlight(fromElement, toElement, amount, options = {}) {
+  const fromRect = fromElement.getBoundingClientRect();
+  const toRect = toElement.getBoundingClientRect();
+  const count = options.count || Math.min(5, Math.max(2, Math.ceil(Math.log10(Math.max(10, amount)))));
+  const denom = chipBreakdown(amount || 1, 1)[0] || 1;
+
+  for (let index = 0; index < count; index += 1) {
+    const size = 30 + Math.min(8, index * 2);
+    const fromX = fromRect.left + fromRect.width / 2 - size / 2;
+    const fromY = fromRect.top + fromRect.height / 2 - size / 2;
+    const toX = toRect.left + toRect.width / 2 - size / 2 + (index - count / 2) * 6;
+    const toY = toRect.top + toRect.height / 2 - size / 2 + (index % 2 ? 6 : -5);
+    const chip = document.createElement("div");
+    chip.className = `fx-chip-flight chip-${denom}`;
+    chip.style.left = `${toX}px`;
+    chip.style.top = `${toY}px`;
+    chip.style.width = `${size}px`;
+    chip.style.height = `${size}px`;
+    chip.style.setProperty("--from-x", `${fromX - toX}px`);
+    chip.style.setProperty("--from-y", `${fromY - toY}px`);
+    chip.style.animationDelay = `${(options.delay || 0) + index * 52}ms`;
+    chip.innerHTML = `<i>${chipLabel(denom)}</i>`;
+    document.body.appendChild(chip);
+    removeAfterAnimation(chip, 980 + (options.delay || 0) + index * 52);
+  }
+}
+
+function addTransientClass(element, className, duration = 700) {
+  if (!element) return;
+  element.classList.remove(className);
+  void element.offsetWidth;
+  element.classList.add(className);
+  window.setTimeout(() => element.classList.remove(className), duration);
+}
+
+function removeAfterAnimation(element, duration) {
+  window.setTimeout(() => element.remove(), duration);
 }
 
 function syncShellChrome() {

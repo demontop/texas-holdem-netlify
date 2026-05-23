@@ -2906,3 +2906,256 @@ th {
     gap: 10px;
   }
 }
+
+.fx-card-flight,
+.fx-chip-flight {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.fx-card-flight {
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.22), transparent 26%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0 3px, transparent 3px 8px),
+    linear-gradient(135deg, #821b33, #102e62 58%, #091426);
+  border: 3px solid #f3ecd9;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.42);
+  transform-origin: 50% 50%;
+  animation: fxDealCard 640ms cubic-bezier(0.18, 0.82, 0.22, 1) forwards;
+}
+
+.fx-card-flight span {
+  position: absolute;
+  inset: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 5px;
+}
+
+.fx-card-flight.face-up {
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.95), transparent 26%),
+    linear-gradient(150deg, #fffdf7, #ece0ca);
+  border-color: rgba(255, 255, 255, 0.92);
+}
+
+.fx-card-flight.face-up span::before {
+  content: "";
+  position: absolute;
+  inset: 28% 32%;
+  border-radius: 50%;
+  background: #b51e31;
+  box-shadow: 0 0 0 10px rgba(181, 30, 49, 0.12);
+}
+
+.fx-chip-flight {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(from 10deg, rgba(255, 255, 255, 0.9) 0 10deg, transparent 10deg 31deg),
+    radial-gradient(circle at 50% 42%, var(--chip-hi), var(--chip-main) 58%, var(--chip-edge));
+  border: 3px solid rgba(255, 255, 255, 0.84);
+  box-shadow:
+    0 12px 20px rgba(0, 0, 0, 0.34),
+    0 0 0 2px rgba(0, 0, 0, 0.16) inset;
+  animation: fxChipFly 760ms cubic-bezier(0.18, 0.78, 0.28, 1) forwards;
+}
+
+.fx-chip-flight i {
+  display: grid;
+  place-items: center;
+  width: 48%;
+  height: 48%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #151515;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.table-shell .board-card-reveal .card {
+  animation: cardRevealSettle 700ms cubic-bezier(0.18, 0.82, 0.22, 1);
+}
+
+.table-shell .card-just-revealed {
+  box-shadow:
+    0 0 24px rgba(255, 224, 127, 0.46),
+    0 12px 22px rgba(0, 0, 0, 0.34),
+    0 2px 0 rgba(255, 255, 255, 0.35) inset;
+}
+
+.table-shell .hand-start-flash {
+  animation: tableStartFlash 900ms ease-out;
+}
+
+.table-shell .showdown-flash {
+  animation: showdownFlash 1100ms ease-out;
+}
+
+.table-shell .pot-pop .chip-stack {
+  animation: potPop 620ms cubic-bezier(0.18, 0.88, 0.32, 1.2);
+}
+
+.table-shell .bet-pop .chip-stack {
+  animation: betPop 620ms cubic-bezier(0.18, 0.88, 0.32, 1.2);
+}
+
+.table-shell .turn-change .avatar-ring {
+  animation: turnArrive 760ms ease-out;
+}
+
+.table-shell .action-status-pop {
+  animation: statusPop 620ms ease-out;
+}
+
+.table-shell .winner-pop {
+  animation: winnerPop 1200ms ease-out;
+}
+
+@keyframes fxDealCard {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--from-x), var(--from-y), 0) rotate(-18deg) scale(0.72);
+  }
+  18% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(4deg) scale(1.04);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(0.98);
+  }
+}
+
+@keyframes fxChipFly {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--from-x), var(--from-y), 0) scale(0.68) rotate(-160deg);
+  }
+  12% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1.08) rotate(18deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.82) rotate(0deg);
+  }
+}
+
+@keyframes cardRevealSettle {
+  0% {
+    opacity: 0;
+    transform: translateY(-22px) rotateY(86deg) scale(0.88);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(0) rotateY(0deg) scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) rotateY(0deg) scale(1);
+  }
+}
+
+@keyframes tableStartFlash {
+  0%, 100% {
+    filter: none;
+  }
+  38% {
+    filter: brightness(1.24) saturate(1.16);
+  }
+}
+
+@keyframes showdownFlash {
+  0%, 100% {
+    filter: none;
+  }
+  28% {
+    filter: brightness(1.28) saturate(1.22);
+  }
+}
+
+@keyframes potPop {
+  0%, 100% {
+    transform: scale(1);
+  }
+  42% {
+    transform: scale(1.22);
+  }
+}
+
+@keyframes betPop {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-5px) scale(1.18);
+  }
+}
+
+@keyframes turnArrive {
+  0% {
+    transform: scale(0.92);
+    filter: brightness(0.82);
+  }
+  38% {
+    transform: scale(1.1);
+    filter: brightness(1.22);
+  }
+  100% {
+    transform: scale(1);
+    filter: none;
+  }
+}
+
+@keyframes statusPop {
+  0%, 100% {
+    transform: translateX(-50%) scale(1);
+  }
+  38% {
+    transform: translateX(-50%) scale(1.08);
+  }
+}
+
+@keyframes winnerPop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+  22% {
+    opacity: 1;
+    transform: translateY(0) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-card-flight,
+  .fx-chip-flight {
+    display: none;
+  }
+
+  .table-shell .board-card-reveal .card,
+  .table-shell .hand-start-flash,
+  .table-shell .showdown-flash,
+  .table-shell .pot-pop .chip-stack,
+  .table-shell .bet-pop .chip-stack,
+  .table-shell .turn-change .avatar-ring,
+  .table-shell .action-status-pop,
+  .table-shell .winner-pop {
+    animation: none;
+  }
+}
