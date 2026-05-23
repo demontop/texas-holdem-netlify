@@ -9,18 +9,29 @@ const ACTIVE_STAGES = new Set(["preflop", "flop", "turn", "river"]);
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
+const MAX_WRITE_RETRIES = 6;
 let blobsModulePromise = null;
+let localWriteQueue = Promise.resolve();
 
 class HttpError extends Error {
-  constructor(statusCode, message) {
+  constructor(statusCode, message, payload = {}) {
     super(message);
     this.statusCode = statusCode;
+    this.payload = payload;
+  }
+}
+
+class WriteConflictError extends Error {
+  constructor() {
+    super("状态写入冲突");
+    this.retryable = true;
   }
 }
 
 function defaultDb() {
   return {
     version: 1,
+    revision: 0,
     users: {},
     sessions: {},
     tables: {},
@@ -34,11 +45,12 @@ function shouldUseBlobs() {
 
 async function getBlobStore() {
   const mod = await getBlobsModule();
-  if (process.env.NETLIFY_BLOBS_CONTEXT) return mod.getStore(STORE_NAME);
+  if (process.env.NETLIFY_BLOBS_CONTEXT) return mod.getStore(STORE_NAME, { consistency: "strong" });
   return mod.getStore({
     name: STORE_NAME,
     siteID: process.env.SITE_ID,
-    token: process.env.NETLIFY_BLOBS_TOKEN
+    token: process.env.NETLIFY_BLOBS_TOKEN,
+    consistency: "strong"
   });
 }
 
@@ -54,26 +66,35 @@ async function configureBlobs(event) {
 }
 
 async function readDb() {
+  return (await readDbEntry()).db;
+}
+
+async function readDbEntry() {
   if (shouldUseBlobs()) {
     const store = await getBlobStore();
-    const text = await store.get(DB_KEY, { type: "text" });
-    return normalizeDb(text ? JSON.parse(text) : defaultDb());
+    const entry = await store.getWithMetadata(DB_KEY, { type: "text", consistency: "strong" });
+    const db = entry?.data ? JSON.parse(entry.data) : defaultDb();
+    return { db: normalizeDb(db), etag: entry?.etag || null };
   }
 
   try {
     const text = await fs.readFile(LOCAL_DB_FILE, "utf8");
-    return normalizeDb(JSON.parse(text));
+    return { db: normalizeDb(JSON.parse(text)), etag: null };
   } catch (error) {
-    if (error.code === "ENOENT") return defaultDb();
+    if (error.code === "ENOENT") return { db: defaultDb(), etag: null };
     throw error;
   }
 }
 
-async function writeDb(db) {
+async function writeDbEntry(db, etag = null, options = {}) {
   db.updatedAt = new Date().toISOString();
   if (shouldUseBlobs()) {
     const store = await getBlobStore();
-    await store.set(DB_KEY, JSON.stringify(db));
+    const setOptions = options.force
+      ? {}
+      : (etag ? { onlyIfMatch: etag } : { onlyIfNew: true });
+    const result = await store.set(DB_KEY, JSON.stringify(db), setOptions);
+    if (!options.force && result && result.modified === false) throw new WriteConflictError();
     return;
   }
 
@@ -83,6 +104,7 @@ async function writeDb(db) {
 
 function normalizeDb(db) {
   db.version = db.version || 1;
+  db.revision = Number(db.revision || 0);
   db.users = db.users || {};
   db.sessions = db.sessions || {};
   db.tables = db.tables || {};
@@ -93,11 +115,17 @@ function normalizeDb(db) {
     if (!session || session.expiresAt < now) delete db.sessions[token];
   }
 
+  for (const user of Object.values(db.users)) {
+    user.revision = Number(user.revision || 0);
+  }
+
   for (const table of Object.values(db.tables)) {
     table.maxSeats = table.maxSeats || 6;
     table.seats = table.seats || Array.from({ length: table.maxSeats }, () => null);
     table.logs = table.logs || [];
     table.winners = table.winners || [];
+    table.revision = Number(table.revision || 0);
+    table.actionReceipts = table.actionReceipts || {};
     for (const player of table.seats) {
       if (player && db.users[player.userId]) {
         player.isBot = Boolean(db.users[player.userId].isBot);
@@ -108,10 +136,37 @@ function normalizeDb(db) {
 }
 
 async function withDb(mutator) {
-  const db = await readDb();
-  const result = await mutator(db);
-  await writeDb(db);
-  return result;
+  if (!shouldUseBlobs()) {
+    const run = async () => {
+      const { db } = await readDbEntry();
+      const result = await mutator(db);
+      db.revision = Number(db.revision || 0) + 1;
+      await writeDbEntry(db);
+      return result;
+    };
+    const next = localWriteQueue.then(run, run);
+    localWriteQueue = next.catch(() => {});
+    return next;
+  }
+
+  for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt += 1) {
+    const { db, etag } = await readDbEntry();
+    try {
+      const result = await mutator(db);
+      db.revision = Number(db.revision || 0) + 1;
+      await writeDbEntry(db, etag);
+      return result;
+    } catch (error) {
+      if (!error.retryable) throw error;
+      await waitForRetry(attempt);
+    }
+  }
+  throw new HttpError(409, "牌桌状态繁忙，请重试");
+}
+
+function waitForRetry(attempt) {
+  const delay = 25 * 2 ** attempt + crypto.randomInt(20);
+  return new Promise((resolve) => setTimeout(resolve, delay));
 }
 
 function json(statusCode, payload) {
@@ -119,6 +174,7 @@ function json(statusCode, payload) {
     statusCode,
     headers: {
       "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store, max-age=0",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "GET,POST,OPTIONS",
       "access-control-allow-headers": "authorization,content-type"
@@ -199,6 +255,7 @@ function userPublic(user) {
     id: user.id,
     username: user.username,
     chips: user.chips,
+    revision: Number(user.revision || 0),
     isAdmin: Boolean(user.isAdmin),
     isBot: Boolean(user.isBot),
     createdAt: user.createdAt
@@ -211,7 +268,7 @@ function getToken(event) {
   return match ? match[1] : null;
 }
 
-function requireUser(db, event) {
+function requireUser(db, event, options = {}) {
   const token = getToken(event);
   const session = token ? db.sessions[token] : null;
   if (!session || session.expiresAt < Date.now()) {
@@ -219,12 +276,14 @@ function requireUser(db, event) {
   }
   const user = db.users[session.userId];
   if (!user) throw new HttpError(401, "登录状态已失效");
-  session.expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 14;
+  if (options.refreshSession !== false) {
+    session.expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 14;
+  }
   return user;
 }
 
-function requireAdmin(db, event) {
-  const user = requireUser(db, event);
+function requireAdmin(db, event, options = {}) {
+  const user = requireUser(db, event, options);
   if (!user.isAdmin) throw new HttpError(403, "需要管理员权限");
   return user;
 }
@@ -278,6 +337,43 @@ function addLog(table, text) {
   table.logs = table.logs || [];
   table.logs.unshift({ at: nowIso(), text });
   table.logs = table.logs.slice(0, 80);
+}
+
+function commandKey(user, body, scope) {
+  const raw = String(body.commandId || body.actionId || "").trim();
+  if (!raw || raw.length > 120) return "";
+  return `${scope}:${user.id}:${raw}`;
+}
+
+function commandAlreadyApplied(table, user, body, scope) {
+  const key = commandKey(user, body, scope);
+  if (!key) return false;
+  const receipt = table.actionReceipts?.[key];
+  return Boolean(receipt && receipt.userId === user.id);
+}
+
+function assertFreshTableRevision(table, user, body) {
+  const expectedRevision = Number(body.tableRevision);
+  if (!Number.isFinite(expectedRevision) || expectedRevision <= 0) return;
+  if (expectedRevision < Number(table.revision || 0)) {
+    throw new HttpError(409, "牌桌状态已更新", { table: publicTable(table, user) });
+  }
+}
+
+function rememberCommand(table, user, body, scope) {
+  const key = commandKey(user, body, scope);
+  if (!key) return;
+  table.actionReceipts = table.actionReceipts || {};
+  table.actionReceipts[key] = {
+    userId: user.id,
+    scope,
+    revision: table.revision || 0,
+    at: nowIso()
+  };
+  const entries = Object.entries(table.actionReceipts)
+    .sort((a, b) => new Date(b[1].at) - new Date(a[1].at))
+    .slice(0, 120);
+  table.actionReceipts = Object.fromEntries(entries);
 }
 
 function takeChips(table, player, amount) {
@@ -628,6 +724,7 @@ function tableSummary(table) {
     bigBlind: table.bigBlind,
     pot: table.pot,
     handNo: table.handNo || 0,
+    revision: table.revision || 0,
     updatedAt: table.updatedAt
   };
 }
@@ -654,6 +751,9 @@ function publicTable(table, viewer) {
     currentBet: table.currentBet,
     minRaise: table.minRaise,
     handNo: table.handNo || 0,
+    revision: table.revision || 0,
+    updatedAt: table.updatedAt,
+    serverTime: nowIso(),
     pot: table.pot,
     community: table.community || [],
     winners: table.winners || [],
@@ -687,12 +787,6 @@ function getTableOrThrow(db, id) {
   const table = db.tables[id];
   if (!table) throw new HttpError(404, "牌桌不存在");
   return table;
-}
-
-function cleanupEmptyTables(db) {
-  for (const [id, table] of Object.entries(db.tables || {})) {
-    if (seatedPlayers(table).length === 0) delete db.tables[id];
-  }
 }
 
 function findPlayerTable(db, userId) {
@@ -748,6 +842,7 @@ function sitUserAtTable(db, table, user, requestedBuyIn, requestedSeat = null) {
   if (seat < 0) throw new HttpError(400, "牌桌已满");
 
   user.chips -= buyIn;
+  touchUser(user);
   table.seats[seat] = createSeatRecord(user, seat, buyIn);
   addLog(table, `${user.username}${user.isBot ? " 机器人" : ""} 带入 ${buyIn} 筹码入座`);
   touchTable(table);
@@ -772,6 +867,7 @@ function createBotUser(db, name, chips) {
     chips,
     isAdmin: false,
     isBot: true,
+    revision: 0,
     createdAt: nowIso()
   };
   db.users[bot.id] = bot;
@@ -805,6 +901,8 @@ function createTable(owner, body) {
     currentTurnSeat: null,
     dealerSeat: null,
     handNo: 0,
+    revision: 0,
+    actionReceipts: {},
     winners: [],
     logs: [],
     createdAt: nowIso(),
@@ -825,14 +923,23 @@ function ensureWaitingForSeatChange(table) {
 }
 
 function touchTable(table) {
+  table.revision = Number(table.revision || 0) + 1;
   table.updatedAt = nowIso();
 }
 
+function touchUser(user) {
+  user.revision = Number(user.revision || 0) + 1;
+}
+
 function handleAction(table, user, body) {
-  if (!ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "当前没有进行中的手牌");
+  if (!ACTIVE_STAGES.has(table.status)) {
+    throw new HttpError(400, "当前没有进行中的手牌", { table: publicTable(table, user) });
+  }
   const player = requireSeated(table, user);
   if (!player.inHand || player.folded || player.allIn) throw new HttpError(400, "当前不能行动");
-  if (table.currentTurnSeat !== player.seat) throw new HttpError(409, "还没轮到你");
+  if (table.currentTurnSeat !== player.seat) {
+    throw new HttpError(409, "牌桌状态已更新", { table: publicTable(table, user) });
+  }
 
   const action = String(body.action || "").toLowerCase();
   const toCall = Math.max(0, table.currentBet - player.bet);
@@ -982,6 +1089,7 @@ exports.handler = async (event) => {
           passwordHash: hash,
           chips: 5000,
           isAdmin,
+          revision: 0,
           createdAt: nowIso()
         };
         db.users[user.id] = user;
@@ -1003,18 +1111,17 @@ exports.handler = async (event) => {
     }
 
     if (method === "GET" && segments[0] === "me") {
-      const db = await readDb();
-      const user = requireUser(db, event);
-      await writeDb(db);
-      return json(200, { user: userPublic(user) });
+      const result = await withDb((db) => {
+        const user = requireUser(db, event);
+        return { user: userPublic(user) };
+      });
+      return json(200, result);
     }
 
     if (segments[0] === "admin") {
       if (method === "GET" && segments[1] === "users") {
         const db = await readDb();
-        requireAdmin(db, event);
-        cleanupEmptyTables(db);
-        await writeDb(db);
+        requireAdmin(db, event, { refreshSession: false });
         return json(200, {
           users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
           tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
@@ -1030,6 +1137,7 @@ exports.handler = async (event) => {
           const user = body.userId ? db.users[body.userId] : findUserByUsername(db, body.username);
           if (!user) throw new HttpError(404, "用户不存在");
           user.chips = Math.max(0, user.chips + amount);
+          touchUser(user);
           db.audit.unshift({
             at: nowIso(),
             actorId: admin.id,
@@ -1079,9 +1187,7 @@ exports.handler = async (event) => {
 
     if (method === "GET" && segments[0] === "lobby") {
       const db = await readDb();
-      const user = requireUser(db, event);
-      cleanupEmptyTables(db);
-      await writeDb(db);
+      const user = requireUser(db, event, { refreshSession: false });
       return json(200, {
         user: userPublic(user),
         tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
@@ -1101,16 +1207,33 @@ exports.handler = async (event) => {
       }
 
       if (method === "GET" && segments[1]) {
-        const result = await withDb((db) => {
-          const user = requireUser(db, event);
-          const table = getTableOrThrow(db, segments[1]);
-          if (seatedPlayers(table).length === 0) {
-            delete db.tables[table.id];
-            throw new HttpError(404, "牌桌已解散");
+        const db = await readDb();
+        const user = requireUser(db, event, { refreshSession: false });
+        const table = getTableOrThrow(db, segments[1]);
+        if (seatedPlayers(table).length === 0) throw new HttpError(404, "牌桌已解散");
+        const currentPlayer = table.seats[table.currentTurnSeat];
+        const since = Number(event.queryStringParameters?.since || -1);
+
+        if (!currentPlayer?.isBot) {
+          if (since >= Number(table.revision || 0)) {
+            return json(200, {
+              user: userPublic(user),
+              table: null,
+              unchanged: true,
+              revision: table.revision || 0,
+              serverTime: nowIso()
+            });
           }
-          const changed = processBotTurns(table);
-          if (changed) touchTable(table);
-          return { user: userPublic(user), table: publicTable(table, user) };
+          return json(200, { user: userPublic(user), table: publicTable(table, user) });
+        }
+
+        const result = await withDb((freshDb) => {
+          const freshUser = requireUser(freshDb, event, { refreshSession: false });
+          const freshTable = getTableOrThrow(freshDb, segments[1]);
+          if (seatedPlayers(freshTable).length === 0) throw new HttpError(404, "牌桌已解散");
+          const changed = processBotTurns(freshTable);
+          if (changed) touchTable(freshTable);
+          return { user: userPublic(freshUser), table: publicTable(freshTable, freshUser) };
         });
         return json(200, result);
       }
@@ -1133,6 +1256,7 @@ exports.handler = async (event) => {
           ensureWaitingForSeatChange(table);
           const player = requireSeated(table, user);
           user.chips += player.stack;
+          touchUser(user);
           table.seats[player.seat] = null;
           addLog(table, `${user.username} 离开牌桌，带走 ${player.stack}`);
           touchTable(table);
@@ -1147,10 +1271,15 @@ exports.handler = async (event) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
           requireSeated(table, user);
+          if (commandAlreadyApplied(table, user, body, "start")) {
+            return { table: publicTable(table, user), duplicate: true };
+          }
+          assertFreshTableRevision(table, user, body);
           if (ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "手牌已经开始");
           startHand(table);
           processBotTurns(table);
           touchTable(table);
+          rememberCommand(table, user, body, "start");
           return { table: publicTable(table, user) };
         });
         return json(200, result);
@@ -1160,9 +1289,14 @@ exports.handler = async (event) => {
         const result = await withDb((db) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
+          if (commandAlreadyApplied(table, user, body, "action")) {
+            return { table: publicTable(table, user), duplicate: true };
+          }
+          assertFreshTableRevision(table, user, body);
           handleAction(table, user, body);
           processBotTurns(table);
           touchTable(table);
+          rememberCommand(table, user, body, "action");
           return { table: publicTable(table, user) };
         });
         return json(200, result);
@@ -1173,6 +1307,6 @@ exports.handler = async (event) => {
   } catch (error) {
     const status = error.statusCode || 500;
     if (status >= 500) console.error(error);
-    return json(status, { error: error.message || "服务器错误" });
+    return json(status, { error: error.message || "服务器错误", ...(error.payload || {}) });
   }
 };

@@ -1,8 +1,11 @@
 const API_BASE = "/api";
 const STORAGE_KEY = "holdem_token";
+const CLIENT_KEY = "holdem_client_id";
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
+  clientId: getClientId(),
+  commandSeq: 0,
   user: null,
   tables: [],
   table: null,
@@ -11,6 +14,7 @@ const state = {
   message: "",
   busy: false,
   poller: null,
+  polling: false,
   tableRequestSeq: 0,
   renderedTableId: null,
   scrollLock: null,
@@ -19,6 +23,20 @@ const state = {
 };
 
 const $app = document.querySelector("#app");
+
+function getClientId() {
+  let id = localStorage.getItem(CLIENT_KEY);
+  if (!id) {
+    id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(CLIENT_KEY, id);
+  }
+  return id;
+}
+
+function nextCommandId(scope) {
+  state.commandSeq += 1;
+  return `${state.clientId}:${scope}:${Date.now()}:${state.commandSeq}`;
+}
 
 function money(value) {
   return Number(value || 0).toLocaleString("zh-CN");
@@ -152,15 +170,21 @@ function setMessage(text) {
 }
 
 async function api(path, options = {}) {
-  const headers = { "content-type": "application/json", ...(options.headers || {}) };
+  const headers = { "content-type": "application/json", "x-client-id": state.clientId, ...(options.headers || {}) };
   if (state.token) headers.authorization = `Bearer ${state.token}`;
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "GET",
+    cache: "no-store",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "请求失败");
+  if (!response.ok) {
+    const error = new Error(payload.error || "请求失败");
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
   return payload;
 }
 
@@ -174,6 +198,7 @@ async function runBusy(task) {
   try {
     await task();
   } catch (error) {
+    applyServerPayload(error.payload);
     errorMessage = error.message || "请求失败";
   } finally {
     state.busy = false;
@@ -184,6 +209,21 @@ async function runBusy(task) {
       render();
     }
   }
+}
+
+function applyServerPayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  let changed = false;
+  if (payload.user) {
+    state.user = payload.user;
+    changed = true;
+  }
+  if (payload.table) {
+    state.table = payload.table;
+    if (state.view !== "table") state.view = "table";
+    changed = true;
+  }
+  return changed;
 }
 
 function lockTableScroll() {
@@ -279,7 +319,8 @@ async function createTable(formElement) {
         smallBlind: Number(form.get("smallBlind")),
         bigBlind: Number(form.get("bigBlind")),
         maxSeats: Number(form.get("maxSeats")),
-        buyIn: Number(buyInInput?.value || 1000)
+        buyIn: Number(buyInInput?.value || 1000),
+        commandId: nextCommandId("create")
       }
     });
     state.user = result.user || state.user;
@@ -293,7 +334,10 @@ async function joinTable(tableId, seat = null) {
   const buyInInput = document.querySelector("[data-buyin]");
   const buyIn = Number(buyInInput?.value || 1000);
   await runBusy(async () => {
-    const result = await api(`/tables/${tableId}/join`, { method: "POST", body: { buyIn, seat } });
+    const result = await api(`/tables/${tableId}/join`, {
+      method: "POST",
+      body: { buyIn, seat, commandId: nextCommandId("join"), tableRevision: state.table?.revision || 0 }
+    });
     state.user = result.user;
     state.table = result.table;
     state.view = "table";
@@ -314,7 +358,10 @@ async function openTable(tableId) {
 async function leaveTable() {
   if (!state.table) return;
   await runBusy(async () => {
-    const result = await api(`/tables/${state.table.id}/leave`, { method: "POST" });
+    const result = await api(`/tables/${state.table.id}/leave`, {
+      method: "POST",
+      body: { commandId: nextCommandId("leave"), tableRevision: state.table.revision || 0 }
+    });
     state.user = result.user;
     state.table = null;
     state.view = "lobby";
@@ -326,7 +373,10 @@ async function leaveTable() {
 async function startHand() {
   if (!state.table) return;
   await runBusy(async () => {
-    const result = await api(`/tables/${state.table.id}/start`, { method: "POST" });
+    const result = await api(`/tables/${state.table.id}/start`, {
+      method: "POST",
+      body: { commandId: nextCommandId("start"), tableRevision: state.table.revision || 0 }
+    });
     state.table = result.table;
   });
 }
@@ -334,7 +384,15 @@ async function startHand() {
 async function playerAction(action, amount = null) {
   if (!state.table) return;
   await runBusy(async () => {
-    const result = await api(`/tables/${state.table.id}/action`, { method: "POST", body: { action, amount } });
+    const result = await api(`/tables/${state.table.id}/action`, {
+      method: "POST",
+      body: {
+        action,
+        amount,
+        commandId: nextCommandId("action"),
+        tableRevision: state.table.revision || 0
+      }
+    });
     state.table = result.table;
   });
 }
@@ -344,37 +402,75 @@ async function refreshTable(silent = true) {
   if (state.busy) return false;
   const requestSeq = ++state.tableRequestSeq;
   const tableId = state.table.id;
+  const since = Number(state.table.revision || 0);
   try {
-    const result = await api(`/tables/${tableId}`);
+    const result = await api(`/tables/${tableId}?since=${encodeURIComponent(since)}`);
     if (requestSeq !== state.tableRequestSeq || !state.table || state.table.id !== tableId) return false;
-    const changed = JSON.stringify(result.user) !== JSON.stringify(state.user)
-      || JSON.stringify(result.table) !== JSON.stringify(state.table);
-    state.user = result.user;
-    state.table = result.table;
+    if (result.unchanged || !result.table) {
+      if (result.user) state.user = result.user;
+      return false;
+    }
+    const changed = Number(result.table.revision || 0) !== Number(state.table.revision || 0)
+      || Number(result.user?.revision || 0) !== Number(state.user?.revision || 0);
+    if (result.user) state.user = result.user;
+    if (result.table) state.table = result.table;
     if (changed && !silent) render();
     return changed;
   } catch (error) {
+    const applied = applyServerPayload(error.payload);
+    if (applied && !silent) render();
     if (!silent) setMessage(error.message);
-    return false;
+    return applied;
   }
 }
 
 function startPolling() {
   stopPolling();
-  state.poller = window.setInterval(async () => {
-    if (state.busy) return;
-    if (state.view === "table" && state.table) {
+  schedulePoll(250);
+}
+
+function schedulePoll(delay = pollDelay()) {
+  stopPollTimer();
+  state.poller = window.setTimeout(runPoll, delay);
+}
+
+async function runPoll() {
+  if (state.polling) {
+    schedulePoll();
+    return;
+  }
+  state.polling = true;
+  try {
+    if (!state.busy && state.view === "table" && state.table) {
       const changed = await refreshTable();
       if (changed) render();
-    } else if (state.view === "lobby") {
+    } else if (!state.busy && state.view === "lobby") {
       await loadLobby(true);
       render();
     }
-  }, 2200);
+  } finally {
+    state.polling = false;
+    if (state.poller !== null) schedulePoll();
+  }
+}
+
+function pollDelay() {
+  if (state.view === "table" && state.table) {
+    if (state.table.controls?.canAct) return 1200;
+    if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 750;
+    return 1600;
+  }
+  if (state.view === "lobby") return 3000;
+  return 5000;
 }
 
 function stopPolling() {
-  if (state.poller) window.clearInterval(state.poller);
+  stopPollTimer();
+  state.polling = false;
+}
+
+function stopPollTimer() {
+  if (state.poller) window.clearTimeout(state.poller);
   state.poller = null;
 }
 
