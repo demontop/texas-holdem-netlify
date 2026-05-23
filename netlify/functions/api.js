@@ -12,6 +12,7 @@ const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 
 const MAX_WRITE_RETRIES = 6;
 let blobsModulePromise = null;
 let localWriteQueue = Promise.resolve();
+let lambdaBlobStrongConsistency = null;
 
 class HttpError extends Error {
   constructor(statusCode, message, payload = {}) {
@@ -45,12 +46,13 @@ function shouldUseBlobs() {
 
 async function getBlobStore() {
   const mod = await getBlobsModule();
-  if (process.env.NETLIFY_BLOBS_CONTEXT) return mod.getStore(STORE_NAME, { consistency: "strong" });
+  const consistencyOptions = blobConsistencyOptions();
+  if (process.env.NETLIFY_BLOBS_CONTEXT) return mod.getStore(STORE_NAME, consistencyOptions);
   return mod.getStore({
     name: STORE_NAME,
     siteID: process.env.SITE_ID,
     token: process.env.NETLIFY_BLOBS_TOKEN,
-    consistency: "strong"
+    ...consistencyOptions
   });
 }
 
@@ -61,8 +63,38 @@ function getBlobsModule() {
 
 async function configureBlobs(event) {
   if (!event.blobs) return;
+  lambdaBlobStrongConsistency = eventBlobsHasUncachedEdgeUrl(event.blobs);
   const mod = await getBlobsModule();
   if (typeof mod.connectLambda === "function") mod.connectLambda(event);
+}
+
+function eventBlobsHasUncachedEdgeUrl(rawContext) {
+  try {
+    const data = JSON.parse(Buffer.from(rawContext, "base64").toString("utf8"));
+    return Boolean(data.uncachedEdgeURL || data.uncached_edge_url || data.uncachedURL);
+  } catch {
+    return false;
+  }
+}
+
+function envBlobsHasUncachedEdgeUrl() {
+  const rawContext = process.env.NETLIFY_BLOBS_CONTEXT;
+  if (!rawContext) return false;
+  try {
+    const data = JSON.parse(Buffer.from(rawContext, "base64").toString("utf8"));
+    return Boolean(data.uncachedEdgeURL || data.uncached_edge_url || data.uncachedURL);
+  } catch {
+    return false;
+  }
+}
+
+function canUseStrongBlobConsistency() {
+  if (lambdaBlobStrongConsistency !== null) return lambdaBlobStrongConsistency;
+  return envBlobsHasUncachedEdgeUrl();
+}
+
+function blobConsistencyOptions() {
+  return canUseStrongBlobConsistency() ? { consistency: "strong" } : {};
 }
 
 async function readDb() {
@@ -72,7 +104,7 @@ async function readDb() {
 async function readDbEntry() {
   if (shouldUseBlobs()) {
     const store = await getBlobStore();
-    const entry = await store.getWithMetadata(DB_KEY, { type: "text", consistency: "strong" });
+    const entry = await store.getWithMetadata(DB_KEY, { type: "text", ...blobConsistencyOptions() });
     const db = entry?.data ? JSON.parse(entry.data) : defaultDb();
     return { db: normalizeDb(db), etag: entry?.etag || null };
   }
