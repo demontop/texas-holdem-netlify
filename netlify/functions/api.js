@@ -158,6 +158,7 @@ function normalizeDb(db) {
     table.winners = table.winners || [];
     table.revision = Number(table.revision || 0);
     table.actionReceipts = table.actionReceipts || {};
+    table.detachedPlayers = table.detachedPlayers || [];
     for (const player of table.seats) {
       if (player && db.users[player.userId]) {
         player.isBot = Boolean(db.users[player.userId].isBot);
@@ -441,6 +442,7 @@ function startHand(table) {
   table.minRaise = table.bigBlind;
   table.winners = [];
   table.revealed = false;
+  table.detachedPlayers = [];
 
   for (const player of seatedPlayers(table)) {
     player.hole = [];
@@ -589,7 +591,7 @@ function resolveShowdown(table) {
     player.bestHandName = best.name;
   }
 
-  const all = handPlayers(table);
+  const all = [...handPlayers(table), ...(table.detachedPlayers || [])];
   const levels = [...new Set(all.map((player) => player.contributed).filter((value) => value > 0))].sort((a, b) => a - b);
   const totals = new Map();
   let previous = 0;
@@ -791,7 +793,16 @@ function publicTable(table, viewer) {
     winners: table.winners || [],
     logs: table.logs || [],
     youSeat: viewerSeat ? viewerSeat.seat : null,
-    controls: { canAct, toCall, minRaiseTo, maxRaiseTo },
+    isOwner: Boolean(viewer && table.ownerId === viewer.id),
+    controls: {
+      canAct,
+      toCall,
+      minRaiseTo,
+      maxRaiseTo,
+      canLeave: Boolean(viewerSeat),
+      canDisband: Boolean(viewer && (viewer.isAdmin || table.ownerId === viewer.id)),
+      activeHand: ACTIVE_STAGES.has(table.status)
+    },
     seats: table.seats.map((player) => {
       if (!player) return null;
       const ownCards = viewer && player.userId === viewer.id;
@@ -935,6 +946,7 @@ function createTable(owner, body) {
     handNo: 0,
     revision: 0,
     actionReceipts: {},
+    detachedPlayers: [],
     winners: [],
     logs: [],
     createdAt: nowIso(),
@@ -952,6 +964,116 @@ function clampInt(value, min, max) {
 
 function ensureWaitingForSeatChange(table) {
   if (ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "牌局进行中，暂不能入座或离桌");
+}
+
+function archiveDetachedContribution(table, player) {
+  if (!ACTIVE_STAGES.has(table.status) || Number(player.contributed || 0) <= 0) return;
+  table.detachedPlayers = table.detachedPlayers || [];
+  table.detachedPlayers.push({
+    userId: player.userId,
+    username: player.username,
+    stack: 0,
+    bet: 0,
+    contributed: player.contributed,
+    folded: true,
+    allIn: false,
+    inHand: true,
+    acted: true,
+    hole: player.hole || []
+  });
+}
+
+function settleAfterSeatRemoval(table, fromSeat) {
+  if (!ACTIVE_STAGES.has(table.status)) return;
+  const remaining = remainingPlayers(table);
+  if (remaining.length === 1) {
+    awardByFold(table, remaining[0]);
+    return;
+  }
+  if (remaining.length === 0) {
+    table.status = "waiting";
+    table.currentTurnSeat = null;
+    table.currentBet = 0;
+    table.pot = 0;
+    return;
+  }
+  const actors = actingPlayers(table);
+  if (actors.length === 0) {
+    runOutToShowdown(table);
+    return;
+  }
+  const current = table.seats[table.currentTurnSeat];
+  if (!current || !current.inHand || current.folded || current.allIn) {
+    maybeAdvance(table, fromSeat);
+    return;
+  }
+  if (actors.every((player) => player.acted && player.bet === table.currentBet)) {
+    advanceStreet(table);
+  }
+}
+
+function leaveSeat(db, table, user) {
+  const player = requireSeated(table, user);
+  const leavingSeat = player.seat;
+  const active = ACTIVE_STAGES.has(table.status);
+
+  if (active && player.inHand && !player.folded) {
+    archiveDetachedContribution(table, player);
+    player.folded = true;
+    player.acted = true;
+    player.lastAction = "弃牌离桌";
+  }
+
+  user.chips += player.stack;
+  touchUser(user);
+  table.seats[leavingSeat] = null;
+  addLog(table, active
+    ? `${user.username} 弃牌离桌，带走 ${player.stack}`
+    : `${user.username} 离开牌桌，带走 ${player.stack}`);
+
+  settleAfterSeatRemoval(table, leavingSeat);
+  touchTable(table);
+  if (seatedPlayers(table).length === 0) {
+    for (const detached of table.detachedPlayers || []) {
+      refundPlayer(db, detached, Number(detached.contributed || 0));
+    }
+    delete db.tables[table.id];
+  }
+}
+
+function requireTableManager(table, user) {
+  if (!user.isAdmin && table.ownerId !== user.id) throw new HttpError(403, "只有房主或管理员可以解散牌桌");
+}
+
+function refundPlayer(db, player, amount) {
+  const user = db.users[player.userId];
+  if (!user || amount <= 0) return;
+  user.chips += amount;
+  touchUser(user);
+}
+
+function disbandTable(db, table, actor) {
+  requireTableManager(table, actor);
+  const includeContributed = ACTIVE_STAGES.has(table.status);
+  for (const player of seatedPlayers(table)) {
+    refundPlayer(db, player, player.stack + (includeContributed ? Number(player.contributed || 0) : 0));
+  }
+  if (includeContributed) {
+    for (const player of table.detachedPlayers || []) {
+      refundPlayer(db, player, Number(player.contributed || 0));
+    }
+  }
+  db.audit.unshift({
+    at: nowIso(),
+    actorId: actor.id,
+    actor: actor.username,
+    type: "disband_table",
+    tableId: table.id,
+    target: table.name,
+    note: includeContributed ? "牌局中解散，退回本手投入" : "牌桌解散"
+  });
+  db.audit = db.audit.slice(0, 300);
+  delete db.tables[table.id];
 }
 
 function touchTable(table) {
@@ -1285,15 +1407,21 @@ exports.handler = async (event) => {
         const result = await withDb((db) => {
           const user = requireUser(db, event);
           const table = getTableOrThrow(db, segments[1]);
-          ensureWaitingForSeatChange(table);
-          const player = requireSeated(table, user);
-          user.chips += player.stack;
-          touchUser(user);
-          table.seats[player.seat] = null;
-          addLog(table, `${user.username} 离开牌桌，带走 ${player.stack}`);
-          touchTable(table);
-          if (seatedPlayers(table).length === 0) delete db.tables[table.id];
+          leaveSeat(db, table, user);
           return { user: userPublic(user), table: db.tables[table.id] ? publicTable(table, user) : null };
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] && segments[2] === "disband") {
+        const result = await withDb((db) => {
+          const user = requireUser(db, event);
+          const table = getTableOrThrow(db, segments[1]);
+          disbandTable(db, table, user);
+          return {
+            user: userPublic(db.users[user.id]),
+            tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+          };
         });
         return json(200, result);
       }

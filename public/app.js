@@ -357,6 +357,9 @@ async function openTable(tableId) {
 
 async function leaveTable() {
   if (!state.table) return;
+  const activeHand = state.table.controls?.activeHand;
+  const message = activeHand ? "牌局中离桌会自动弃牌，确定离开吗？" : "确定离开当前牌桌吗？";
+  if (!window.confirm(message)) return;
   await runBusy(async () => {
     const result = await api(`/tables/${state.table.id}/leave`, {
       method: "POST",
@@ -367,6 +370,23 @@ async function leaveTable() {
     state.view = "lobby";
     await loadLobby(true);
     stopPolling();
+  });
+}
+
+async function disbandTable() {
+  if (!state.table) return;
+  if (!window.confirm("确定解散这张牌桌吗？桌上玩家的剩余筹码会退回钱包。")) return;
+  await runBusy(async () => {
+    const result = await api(`/tables/${state.table.id}/disband`, {
+      method: "POST",
+      body: { commandId: nextCommandId("disband"), tableRevision: state.table.revision || 0 }
+    });
+    state.user = result.user || state.user;
+    state.table = null;
+    state.tables = result.tables || [];
+    state.view = "lobby";
+    stopPolling();
+    await loadLobby(true);
   });
 }
 
@@ -685,10 +705,13 @@ function tableMetaText(table) {
 function toolbarActionsHtml(table) {
   const isSeated = table.youSeat != null;
   const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
-  const canLeave = isSeated && !["preflop", "flop", "turn", "river"].includes(table.status);
+  const canLeave = Boolean(table.controls?.canLeave);
+  const canDisband = Boolean(table.controls?.canDisband);
+  const activeHand = Boolean(table.controls?.activeHand);
   return `
-    <button class="primary slim ${canStart ? "" : "action-hidden"}" data-action="start-hand" ${canStart ? "" : `disabled aria-hidden="true"`}>发牌</button>
-    <button class="ghost slim ${canLeave ? "" : "action-hidden"}" data-action="leave-table" ${canLeave ? "" : `disabled aria-hidden="true"`}>离桌</button>
+    <button class="primary slim" data-action="start-hand" ${canStart ? "" : "disabled"}>发牌</button>
+    <button class="ghost slim" data-action="leave-table" ${canLeave ? "" : "disabled"}>${activeHand ? "弃牌离桌" : "离桌"}</button>
+    <button class="danger slim" data-action="disband-table" ${canDisband ? "" : "disabled"}>解散桌子</button>
   `;
 }
 
@@ -1283,6 +1306,7 @@ document.addEventListener("click", async (event) => {
   if (action === "admin") await loadAdmin();
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
+  if (action === "disband-table") await disbandTable();
   if (action === "toggle-raise") {
     state.raiseDrawerOpen = !state.raiseDrawerOpen;
     render();
