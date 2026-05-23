@@ -14,6 +14,7 @@ const state = {
   tableRequestSeq: 0,
   renderedTableId: null,
   scrollLock: null,
+  raiseDrawerOpen: false,
   admin: { users: [], tables: [], audit: [] }
 };
 
@@ -65,6 +66,15 @@ function cardHtml(card, small = false) {
       ${pips}
       <span class="small-center">${meta.suit}</span>
       <span class="card-index bottom"><b>${meta.rank}</b><i>${meta.suit}</i></span>
+    </div>
+  `;
+}
+
+function communityCardHtml(card) {
+  if (card) return cardHtml(card);
+  return `
+    <div class="card card-placeholder" aria-hidden="true">
+      <span></span>
     </div>
   `;
 }
@@ -418,8 +428,9 @@ async function addBot(formElement) {
 
 function shell(content) {
   const user = state.user;
+  const shellClass = `app-shell ${state.view === "table" ? "table-shell" : ""}`.trim();
   return `
-    <div class="app-shell">
+    <div class="${shellClass}">
       <header class="topbar">
         <button class="brand" data-action="lobby" ${!user ? "disabled" : ""}>
           <span class="brand-mark">TH</span>
@@ -536,12 +547,16 @@ function tableView() {
   const controls = table.controls || {};
 
   return shell(`
-    <main class="game-layout">
+    <main class="game-layout" data-table-id="${table.id}" data-max-seats="${seatCount}">
+      <div class="casino-room" aria-hidden="true">
+        <span class="room-column column-left"></span>
+        <span class="room-column column-right"></span>
+      </div>
       <section class="table-toolbar">
         <button class="ghost" data-action="back-lobby">大厅</button>
-        <div>
-          <strong>${escapeHtml(table.name)}</strong>
-          <span>${tableMetaText(table)}</span>
+        <div class="table-title">
+          <strong data-table-title>${escapeHtml(table.name)}</strong>
+          <span data-table-meta>${tableMetaText(table)}</span>
         </div>
         <div class="toolbar-actions">${toolbarActionsHtml(table)}</div>
       </section>
@@ -576,8 +591,8 @@ function toolbarActionsHtml(table) {
   const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
   const canLeave = isSeated && !["preflop", "flop", "turn", "river"].includes(table.status);
   return `
-    ${canStart ? `<button class="primary slim" data-action="start-hand">发牌</button>` : ""}
-    ${canLeave ? `<button class="ghost" data-action="leave-table">离桌</button>` : ""}
+    <button class="primary slim ${canStart ? "" : "action-hidden"}" data-action="start-hand" ${canStart ? "" : `disabled aria-hidden="true"`}>发牌</button>
+    <button class="ghost slim ${canLeave ? "" : "action-hidden"}" data-action="leave-table" ${canLeave ? "" : `disabled aria-hidden="true"`}>离桌</button>
   `;
 }
 
@@ -588,7 +603,11 @@ function boardCards(table) {
 }
 
 function boardHtml(table) {
-  return boardCards(table).map((card, index) => `<div class="board-slot" data-board-card="${index}">${cardHtml(card)}</div>`).join("");
+  return boardCards(table).map((card, index) => boardSlotHtml(card, index)).join("");
+}
+
+function boardSlotHtml(card, index) {
+  return `<div class="board-slot ${card ? "filled" : "empty"}" data-board-card="${index}" data-card-value="${card || ""}">${communityCardHtml(card)}</div>`;
 }
 
 function potHtml(table) {
@@ -619,19 +638,34 @@ function seatEntries(table) {
 }
 
 function seatHtml(entry, table) {
+  return `
+    <div class="${seatClassName(entry, table)}" data-seat="${entry.actualSeat}" data-display-seat="${entry.displaySeat}">
+      ${seatContentHtml(entry, table)}
+    </div>
+  `;
+}
+
+function seatClassName(entry, table) {
   const { player, displaySeat, actualSeat } = entry;
   const occupied = Boolean(player);
   const isMe = player && table.youSeat === actualSeat;
   const isTurn = table.currentTurnSeat === actualSeat;
+  return ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function seatContentHtml(entry, table) {
+  const { player, actualSeat } = entry;
+  const occupied = Boolean(player);
   const dealer = table.dealerSeat === actualSeat;
-  const className = ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""].join(" ");
   const holeCards = occupied && player.hole && player.hole.length ? player.hole : [null, null];
   const hasBet = occupied && Number(player.bet) > 0;
 
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
     return `
-      <button class="${className}" data-seat="${actualSeat}" data-display-seat="${displaySeat}" ${canJoin ? `data-join-seat="${actualSeat}"` : "disabled"}>
+      <button class="seat-join" ${canJoin ? `data-join-seat="${actualSeat}"` : "disabled"}>
         <span class="avatar">+</span>
         <strong>空位</strong>
       </button>
@@ -639,8 +673,15 @@ function seatHtml(entry, table) {
   }
 
   return `
-    <div class="${className}" data-seat="${actualSeat}" data-display-seat="${displaySeat}">
+    <div class="seat-player">
+      <span class="turn-pointer" aria-hidden="true">行动</span>
       ${dealer ? `<span class="dealer">D</span>` : ""}
+      <div class="avatar-ring" style="--avatar-hue:${avatarHue(player.username)}">
+        <div class="avatar-face">
+          <span>${escapeHtml(avatarInitial(player.username))}</span>
+        </div>
+        <i>礼</i>
+      </div>
       <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
         <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
@@ -663,7 +704,7 @@ function auditText(item) {
 function sitPanel(table) {
   const disabled = !["waiting", "showdown"].includes(table.status);
   return `
-    <div class="control-panel">
+    <div class="control-panel sit-control" data-control-mode="sit" data-control-key="${controlKey(table)}">
       <h2>入座</h2>
       <label>
         <span>带入筹码</span>
@@ -677,29 +718,113 @@ function sitPanel(table) {
 function actionPanel(controls, table) {
   const canAct = controls.canAct;
   const toCall = controls.toCall || 0;
-  const minRaise = controls.minRaiseTo || table.bigBlind;
-  const maxRaise = controls.maxRaiseTo || minRaise;
+  const raise = raiseCalculator(table);
+  const canRaise = canAct && raise.max > table.currentBet;
+  const turnName = turnPlayerName(table);
+  const drawerOpen = canRaise && state.raiseDrawerOpen;
+  const activeHand = ["preflop", "flop", "turn", "river"].includes(table.status);
   return `
-    <div class="control-panel">
-      <h2>行动</h2>
-      <div class="call-box">
-        <span>待跟注</span>
-        <strong>${money(toCall)}</strong>
+    <div class="control-panel action-panel ${drawerOpen ? "raise-open" : ""} ${activeHand ? "" : "inactive-hand"}" data-control-mode="action" data-control-key="${controlKey(table)}" data-player-bet="${raise.playerBet}" data-current-bet="${table.currentBet || 0}">
+      <div class="action-status">
+        <span class="${canAct ? "live-dot" : ""}">${canAct ? "轮到你" : (turnName ? `${escapeHtml(turnName)} 行动` : stageLabel(table.status))}</span>
+        <b>${toCall > 0 ? `需跟 ${money(toCall)}` : "可看牌"}</b>
       </div>
-      <div class="action-grid">
-        <button class="ghost" data-action-move="fold" ${!canAct ? "disabled" : ""}>弃牌</button>
-        <button class="ghost" data-action-move="${toCall > 0 ? "call" : "check"}" ${!canAct ? "disabled" : ""}>${toCall > 0 ? "跟注" : "看牌"}</button>
+      <div class="raise-drawer" aria-hidden="${drawerOpen ? "false" : "true"}">
+        <div class="raise-total">
+          <span>加注到</span>
+          <strong data-raise-total>${money(raise.value)}</strong>
+        </div>
+        <div class="raise-presets">
+          ${raise.presets.map((preset) => `<button class="ghost preset" data-raise-preset="${preset.value}" ${!canRaise ? "disabled" : ""}>${preset.label}</button>`).join("")}
+        </div>
+        <div class="raise-stepper">
+          <button class="ghost" data-raise-step="-1" ${!canRaise ? "disabled" : ""}>-</button>
+          <label>
+            <span>金额</span>
+            <input data-raise-amount data-player-bet="${raise.playerBet}" type="number" min="${raise.min}" max="${raise.max}" step="${raise.step}" value="${raise.value}" ${!canRaise ? "disabled" : ""} />
+          </label>
+          <button class="ghost" data-raise-step="1" ${!canRaise ? "disabled" : ""}>+</button>
+        </div>
+        <input class="raise-slider" data-raise-slider type="range" min="${raise.min}" max="${raise.max}" step="${raise.step}" value="${raise.value}" ${!canRaise ? "disabled" : ""} />
+        <div class="raise-needed" data-raise-needed>需补 ${money(Math.max(0, raise.value - raise.playerBet))}</div>
+        <button class="primary confirm-raise" data-action-move="raise" data-raise-submit ${!canRaise ? "disabled" : ""}>确认 ${money(raise.value)}</button>
       </div>
-      <label>
-        <span>加注到</span>
-        <input data-raise-amount type="number" min="${minRaise}" max="${maxRaise}" step="${table.bigBlind}" value="${minRaise}" ${!canAct ? "disabled" : ""} />
-      </label>
-      <div class="action-grid">
-        <button class="primary" data-action-move="raise" ${!canAct ? "disabled" : ""}>加注</button>
-        <button class="danger" data-action-move="allin" ${!canAct ? "disabled" : ""}>全下</button>
+      <div class="action-bottom-bar">
+        <button class="danger action-big" data-action-move="fold" ${!canAct ? "disabled" : ""}>弃牌</button>
+        <button class="success action-big" data-action-move="${toCall > 0 ? "call" : "check"}" ${!canAct ? "disabled" : ""}>${toCall > 0 ? `跟注 ${money(toCall)}` : "看牌"}</button>
+        <button class="primary action-big" data-action="toggle-raise" ${!canRaise ? "disabled" : ""}>${drawerOpen ? "收起加注" : "跟任意注"}</button>
+        <button class="ghost action-big allin" data-action-move="allin" ${!canAct ? "disabled" : ""}>全下</button>
       </div>
     </div>
   `;
+}
+
+function avatarInitial(username) {
+  return String(username || "P").trim().slice(0, 1).toUpperCase();
+}
+
+function avatarHue(username) {
+  const text = String(username || "");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) % 360;
+  }
+  return hash;
+}
+
+function controlKey(table) {
+  const controls = table.controls || {};
+  return [
+    table.status,
+    table.handNo || 0,
+    table.currentTurnSeat ?? "",
+    table.currentBet || 0,
+    table.pot || 0,
+    controls.canAct ? 1 : 0,
+    controls.toCall || 0,
+    controls.minRaiseTo || 0,
+    controls.maxRaiseTo || 0,
+    table.youSeat ?? "",
+    state.raiseDrawerOpen ? 1 : 0
+  ].join("|");
+}
+
+function turnPlayerName(table) {
+  const player = table.seats?.[table.currentTurnSeat];
+  return player?.username || "";
+}
+
+function raiseCalculator(table) {
+  const controls = table.controls || {};
+  const player = table.youSeat == null ? null : table.seats?.[table.youSeat];
+  const playerBet = Number(player?.bet || 0);
+  const step = Math.max(1, Number(table.bigBlind || 1));
+  const rawMin = Number(controls.minRaiseTo || table.bigBlind || step);
+  const rawMax = Number(controls.maxRaiseTo || rawMin);
+  const min = Math.max(0, Math.min(rawMin, rawMax));
+  const max = Math.max(min, rawMax);
+  const toCall = Number(controls.toCall || 0);
+  const potAfterCall = Number(table.pot || 0) + toCall;
+  const halfPot = normalizeRaiseValue(table.currentBet + Math.max(step, Math.ceil(potAfterCall / 2)), min, max, step);
+  const fullPot = normalizeRaiseValue(table.currentBet + Math.max(step, potAfterCall), min, max, step);
+  const value = normalizeRaiseValue(min, min, max, step);
+  const presets = [
+    { label: "最小", value },
+    { label: "半池", value: halfPot },
+    { label: "底池", value: fullPot },
+    { label: "全下", value: max }
+  ];
+  const uniquePresets = presets.filter((preset, index, list) => list.findIndex((item) => item.value === preset.value) === index);
+  return { min, max, step, value, playerBet, presets: uniquePresets };
+}
+
+function normalizeRaiseValue(value, min, max, step) {
+  const number = Number(value);
+  const safeMin = Number(min) || 0;
+  const safeMax = Math.max(safeMin, Number(max) || safeMin);
+  const safeStep = Math.max(1, Number(step) || 1);
+  const bounded = Math.max(safeMin, Math.min(safeMax, Number.isFinite(number) ? number : safeMin));
+  return Math.max(safeMin, Math.min(safeMax, safeMin + Math.ceil((bounded - safeMin) / safeStep) * safeStep));
 }
 
 function adminView() {
@@ -773,6 +898,7 @@ function adminView() {
 }
 
 function render() {
+  if (!state.table?.controls?.canAct) state.raiseDrawerOpen = false;
   const nextTableId = state.view === "table" && state.table ? state.table.id : null;
   const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
   const canPatchTable = Boolean(preserveScroll && $app.querySelector(".game-layout"));
@@ -794,6 +920,7 @@ function render() {
     $app.innerHTML = lobbyView();
   }
   state.renderedTableId = nextTableId;
+  if (nextTableId) syncRaiseControls($app);
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
 }
@@ -801,20 +928,20 @@ function render() {
 function patchTableView(table) {
   syncShellChrome();
   const root = $app.querySelector(".game-layout");
-  if (!root) {
+  if (!root || root.dataset.tableId !== table.id || Number(root.dataset.maxSeats) !== (table.maxSeats || 6)) {
     $app.innerHTML = tableView();
     return;
   }
 
-  const title = root.querySelector(".table-toolbar strong");
+  const title = root.querySelector("[data-table-title]");
   if (title) title.textContent = table.name;
-  const meta = root.querySelector(".table-toolbar span");
+  const meta = root.querySelector("[data-table-meta]");
   if (meta) meta.textContent = tableMetaText(table);
   setInnerHtml(root.querySelector(".toolbar-actions"), toolbarActionsHtml(table));
 
   const felt = root.querySelector(".felt-table");
   if (felt) felt.className = `felt-table seats-${table.maxSeats || 6}`;
-  setInnerHtml(root.querySelector(".board"), boardHtml(table));
+  patchBoard(root, table);
   setInnerHtml(root.querySelector(".pot"), potHtml(table));
 
   const winner = root.querySelector(".winner-strip");
@@ -831,17 +958,46 @@ function patchTableView(table) {
   }
 
   for (const entry of seatEntries(table)) {
-    const current = root.querySelector(`[data-seat="${entry.actualSeat}"]`);
-    const next = seatHtml(entry, table).trim();
-    if (current && current.outerHTML.trim() !== next) {
-      current.outerHTML = next;
-    }
+    patchSeat(root, entry, table);
   }
 
   const panel = root.querySelector(".control-panel");
   const nextPanel = table.youSeat != null ? actionPanel(table.controls || {}, table) : sitPanel(table);
-  if (panel && panel.outerHTML.trim() !== nextPanel.trim()) panel.outerHTML = nextPanel;
+  const nextMode = table.youSeat != null ? "action" : "sit";
+  const nextKey = controlKey(table);
+  if (!panel || panel.dataset.controlMode !== nextMode) {
+    if (panel) panel.outerHTML = nextPanel;
+  } else if (panel.dataset.controlKey !== nextKey) {
+    panel.outerHTML = nextPanel;
+  }
+  syncRaiseControls(root);
   setInnerHtml(root.querySelector(".logs"), logsHtml(table));
+}
+
+function patchBoard(root, table) {
+  boardCards(table).forEach((card, index) => {
+    const slot = root.querySelector(`[data-board-card="${index}"]`);
+    if (!slot) return;
+    const value = card || "";
+    slot.classList.toggle("filled", Boolean(card));
+    slot.classList.toggle("empty", !card);
+    if (slot.dataset.cardValue !== value) {
+      slot.dataset.cardValue = value;
+      slot.innerHTML = communityCardHtml(card);
+    }
+  });
+}
+
+function patchSeat(root, entry, table) {
+  const seat = root.querySelector(`[data-seat="${entry.actualSeat}"]`);
+  if (!seat) return;
+  const nextClass = seatClassName(entry, table);
+  if (seat.className !== nextClass) seat.className = nextClass;
+  if (seat.dataset.displaySeat !== String(entry.displaySeat)) {
+    seat.dataset.displaySeat = String(entry.displaySeat);
+  }
+  const nextContent = seatContentHtml(entry, table).trim();
+  if (seat.innerHTML.trim() !== nextContent) seat.innerHTML = nextContent;
 }
 
 function syncShellChrome() {
@@ -870,6 +1026,47 @@ function syncToast() {
 
 function setInnerHtml(element, html) {
   if (element && element.innerHTML !== html) element.innerHTML = html;
+}
+
+function setRaiseAmount(value, commit = true) {
+  const input = document.querySelector("[data-raise-amount]");
+  if (!input) return 0;
+  const min = Number(input.min || 0);
+  const max = Number(input.max || min);
+  const step = Number(input.step || 1);
+  const next = normalizeRaiseValue(value, min, max, step);
+  input.value = String(next);
+  const slider = document.querySelector("[data-raise-slider]");
+  if (slider) slider.value = String(next);
+  syncRaiseControls(document);
+  if (commit) input.dispatchEvent(new Event("change", { bubbles: true }));
+  return next;
+}
+
+function syncRaiseControls(scope = document) {
+  const root = scope.querySelector ? scope : document;
+  const input = root.querySelector("[data-raise-amount]");
+  if (!input) return;
+  const min = Number(input.min || 0);
+  const max = Number(input.max || min);
+  const step = Number(input.step || 1);
+  const value = normalizeRaiseValue(input.value, min, max, step);
+  const slider = root.querySelector("[data-raise-slider]");
+  if (slider && document.activeElement !== slider) slider.value = String(value);
+  const playerBet = Number(input.dataset.playerBet || 0);
+  const needed = Math.max(0, value - playerBet);
+  const neededLabel = root.querySelector("[data-raise-needed]");
+  if (neededLabel) neededLabel.textContent = `需补 ${money(needed)}`;
+  const total = root.querySelector("[data-raise-total]");
+  if (total) total.textContent = money(value);
+  const submit = root.querySelector("[data-raise-submit]");
+  if (submit) submit.textContent = submit.classList.contains("confirm-raise") ? `确认 ${money(value)}` : `加注到 ${money(value)}`;
+}
+
+function commitRaiseInput() {
+  const input = document.querySelector("[data-raise-amount]");
+  if (!input) return 0;
+  return setRaiseAmount(input.value, false);
 }
 
 function restoreScrollPosition(scrollX, scrollY) {
@@ -914,6 +1111,24 @@ document.addEventListener("pointerdown", (event) => {
   }
 }, true);
 
+document.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.dataset.raiseSlider !== undefined) {
+    setRaiseAmount(target.value, false);
+  }
+  if (target.dataset.raiseAmount !== undefined) {
+    syncRaiseControls(document);
+  }
+});
+
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (target instanceof HTMLInputElement && target.dataset.raiseAmount !== undefined) {
+    commitRaiseInput();
+  }
+});
+
 document.addEventListener("click", async (event) => {
   const target = event.target.closest("button");
   if (!target) return;
@@ -939,9 +1154,22 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.raisePreset) {
+    setRaiseAmount(Number(target.dataset.raisePreset));
+    return;
+  }
+
+  if (target.dataset.raiseStep) {
+    const input = document.querySelector("[data-raise-amount]");
+    const step = Number(input?.step || state.table?.bigBlind || 1);
+    setRaiseAmount(Number(input?.value || 0) + Number(target.dataset.raiseStep) * step);
+    return;
+  }
+
   if (target.dataset.actionMove) {
     const move = target.dataset.actionMove;
-    const amount = move === "raise" ? Number(document.querySelector("[data-raise-amount]")?.value || 0) : null;
+    const amount = move === "raise" ? commitRaiseInput() : null;
+    state.raiseDrawerOpen = false;
     await playerAction(move, amount);
     return;
   }
@@ -959,6 +1187,10 @@ document.addEventListener("click", async (event) => {
   if (action === "admin") await loadAdmin();
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
+  if (action === "toggle-raise") {
+    state.raiseDrawerOpen = !state.raiseDrawerOpen;
+    render();
+  }
 });
 
 bootstrap();
