@@ -1,17 +1,23 @@
 {
-  "name": "texas-holdem-netlify",
+  "name": "texas-holdem-cloudflare",
   "version": "1.0.0",
   "private": true,
-  "description": "Netlify-deployable multiplayer Texas Hold'em web app with auth, admin chip recharge, and realistic poker table UI.",
+  "description": "Cloudflare-deployable multiplayer Texas Hold'em web app with auth, admin chip recharge, bots, and realistic poker table UI.",
   "type": "commonjs",
   "scripts": {
     "dev": "node scripts/dev-server.mjs",
-    "build": "node scripts/build-check.mjs"
+    "build": "node scripts/build-check.mjs",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:dry-run": "wrangler deploy --dry-run"
   },
   "dependencies": {
     "@netlify/blobs": "latest"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "wrangler": "^4.94.0"
   }
 }

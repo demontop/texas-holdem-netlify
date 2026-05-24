@@ -1,6 +1,7 @@
 .DS_Store
 .data/
 .netlify/
+.wrangler/
 node_modules/
 dist/
 npm-debug.log*
