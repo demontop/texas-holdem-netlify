@@ -778,6 +778,11 @@ function publicTable(table, viewer) {
   const minRaiseTo = table.currentBet === 0
     ? Math.min(table.bigBlind, maxRaiseTo)
     : Math.min(table.currentBet + table.minRaise, maxRaiseTo);
+  const revealedWinnerIds = new Set(
+    table.status === "showdown" && table.revealed
+      ? (table.winners || []).map((winner) => winner.userId)
+      : []
+  );
 
   return {
     id: table.id,
@@ -817,7 +822,7 @@ function publicTable(table, viewer) {
     seats: table.seats.map((player) => {
       if (!player) return null;
       const ownCards = viewer && player.userId === viewer.id;
-      const reveal = table.status === "showdown" && table.revealed && !player.folded;
+      const reveal = revealedWinnerIds.has(player.userId) && !player.folded;
       return {
         seat: player.seat,
         userId: player.userId,

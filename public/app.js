@@ -683,7 +683,7 @@ function tableView() {
   const controls = table.controls || {};
 
   return shell(`
-    <main class="game-layout" data-table-id="${table.id}" data-max-seats="${seatCount}">
+    <main class="${tableLayoutClass(table)}" data-table-id="${table.id}" data-max-seats="${seatCount}">
       <div class="casino-room" aria-hidden="true">
         <span class="room-column column-left"></span>
         <span class="room-column column-right"></span>
@@ -721,6 +721,10 @@ function tableView() {
 
 function tableMetaText(table) {
   return `${stageLabel(table.status)} · 第 ${table.handNo || 0} 手牌 · ${table.smallBlind}/${table.bigBlind}`;
+}
+
+function tableLayoutClass(table) {
+  return `game-layout stage-${table.status || "waiting"}`;
 }
 
 function toolbarActionsHtml(table) {
@@ -823,7 +827,10 @@ function seatClassName(entry, table) {
   const occupied = Boolean(player);
   const isMe = player && table.youSeat === actualSeat;
   const isTurn = table.currentTurnSeat === actualSeat;
-  return ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", player?.folded ? "folded" : ""]
+  const winnerIds = new Set((table.winners || []).map((winner) => winner.userId));
+  const hasFaceUpHole = player?.hole?.some(Boolean);
+  const isWinner = player && table.status === "showdown" && winnerIds.has(player.userId) && hasFaceUpHole;
+  return ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", isWinner ? "winner" : "", player?.folded ? "folded" : ""]
     .filter(Boolean)
     .join(" ");
 }
@@ -1143,6 +1150,7 @@ function patchTableView(table) {
   if (title) title.textContent = table.name;
   const meta = root.querySelector("[data-table-meta]");
   if (meta) meta.textContent = tableMetaText(table);
+  root.className = tableLayoutClass(table);
   setInnerHtml(root.querySelector(".toolbar-actions"), toolbarActionsHtml(table));
 
   const felt = root.querySelector(".felt-table");
