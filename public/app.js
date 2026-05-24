@@ -409,6 +409,7 @@ async function disbandTable() {
 
 async function startHand() {
   if (!state.table) return;
+  hideShowdownOverlay();
   await runBusy(async () => {
     const result = await api(`/tables/${state.table.id}/start`, {
       method: "POST",
@@ -678,7 +679,6 @@ function tableView() {
   if (!table) return lobbyView();
   const seatCount = table.maxSeats || 6;
   const seats = seatEntries(table);
-  const winnersText = winnerText(table);
   const isSeated = table.youSeat != null;
   const controls = table.controls || {};
 
@@ -702,7 +702,6 @@ function tableView() {
           <div class="table-center">
             <div class="board">${boardHtml(table)}</div>
             <div class="pot">${potHtml(table)}</div>
-            <div class="winner-strip ${winnersText ? "" : "empty"}" ${winnersText ? "" : `aria-hidden="true"`}>${winnersText || "等待结算"}</div>
           </div>
           ${seats.map((entry) => seatHtml(entry, table)).join("")}
         </div>
@@ -715,6 +714,7 @@ function tableView() {
         </div>
       </aside>
       ${rulesPanelHtml()}
+      ${showdownOverlayHtml(table)}
     </main>
   `);
 }
@@ -755,6 +755,26 @@ function rulesPanelHtml() {
   `;
 }
 
+function showdownOverlayHtml(table) {
+  const winners = table.winners || [];
+  const visible = table.status === "showdown" && winners.length > 0;
+  const winnerRows = winners.map((winner) => `
+    <p><strong>${escapeHtml(winner.username)}</strong><span>+${money(winner.amount)}</span>${winner.hand ? `<em>${escapeHtml(winner.hand)}</em>` : ""}</p>
+  `).join("");
+  const stackRows = (table.seats || []).filter(Boolean).map((player) => `
+    <span>${escapeHtml(player.username)} <b>${money(player.stack)}</b></span>
+  `).join("");
+  return `
+    <section class="showdown-overlay ${visible ? "visible" : ""}" data-showdown-overlay aria-hidden="${visible ? "false" : "true"}">
+      <div class="showdown-card">
+        <h2>本手结算</h2>
+        <div class="showdown-winners">${winnerRows || "<p><strong>等待结算</strong></p>"}</div>
+        <div class="showdown-stacks">${stackRows}</div>
+      </div>
+    </section>
+  `;
+}
+
 function boardCards(table) {
   const board = [...(table.community || [])];
   while (board.length < 5) board.push(null);
@@ -771,12 +791,6 @@ function boardSlotHtml(card, index) {
 
 function potHtml(table) {
   return `${chipStackHtml(table.pot)}<span>底池</span>`;
-}
-
-function winnerText(table) {
-  return table.winners?.length
-    ? table.winners.map((winner) => `${escapeHtml(winner.username)} +${money(winner.amount)} ${winner.hand ? `· ${winner.hand}` : ""}`).join("　")
-    : "";
 }
 
 function logsHtml(table) {
@@ -848,7 +862,7 @@ function seatContentHtml(entry, table) {
       <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
         <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
-        <span>${money(player.stack)}</span>
+        <span class="stack-line"><small>剩余</small><b>${money(player.stack)}</b></span>
       </div>
       <div class="seat-bet ${hasBet ? "" : "empty"}" ${hasBet ? "" : `aria-hidden="true"`}>${hasBet ? chipStackHtml(player.bet, true) : ""}</div>
       <div class="status-pill">${escapeHtml(player.lastAction || "等待")}${player.bestHandName ? ` · ${player.bestHandName}` : ""}</div>
@@ -1135,19 +1149,7 @@ function patchTableView(table) {
   if (felt) felt.className = `felt-table seats-${table.maxSeats || 6}`;
   patchBoard(root, table);
   setInnerHtml(root.querySelector(".pot"), potHtml(table));
-
-  const winner = root.querySelector(".winner-strip");
-  if (winner) {
-    const text = winnerText(table);
-    winner.classList.toggle("empty", !text);
-    if (text) {
-      winner.removeAttribute("aria-hidden");
-      winner.textContent = text;
-    } else {
-      winner.setAttribute("aria-hidden", "true");
-      winner.textContent = "等待结算";
-    }
-  }
+  syncShowdownOverlay(root, table);
 
   for (const entry of seatEntries(table)) {
     patchSeat(root, entry, table);
@@ -1173,6 +1175,23 @@ function syncRulesDrawer(root = document) {
   if (!drawer) return;
   drawer.classList.toggle("open", state.rulesOpen);
   drawer.setAttribute("aria-hidden", state.rulesOpen ? "false" : "true");
+}
+
+function syncShowdownOverlay(root, table) {
+  const next = showdownOverlayHtml(table);
+  const existing = root.querySelector("[data-showdown-overlay]");
+  if (existing) {
+    if (existing.outerHTML !== next.trim()) existing.outerHTML = next;
+  } else {
+    root.insertAdjacentHTML("beforeend", next);
+  }
+}
+
+function hideShowdownOverlay(root = document) {
+  const overlay = root.querySelector("[data-showdown-overlay]");
+  if (!overlay) return;
+  overlay.classList.remove("visible");
+  overlay.setAttribute("aria-hidden", "true");
 }
 
 function syncActionCountdown() {
@@ -1360,14 +1379,13 @@ function animateShowdown(root, previous, table) {
   const oldWinnerText = (previous.winners || []).map((winner) => `${winner.userId}:${winner.amount}`).join("|");
   if (!becameShowdown && newWinnerText === oldWinnerText) return;
 
-  const winnerStrip = root.querySelector(".winner-strip");
-  addTransientClass(winnerStrip, "winner-pop", 1300);
   addTransientClass(root.querySelector(".felt-table"), "showdown-flash", 1200);
 
   const pot = root.querySelector(".pot");
+  const fallbackTarget = root.querySelector(".showdown-card") || root.querySelector(".felt-table");
   for (const winner of table.winners || []) {
     const seat = (table.seats || []).find((player) => player && player.userId === winner.userId);
-    const target = seat ? root.querySelector(`[data-seat="${seat.seat}"]`) : winnerStrip;
+    const target = seat ? root.querySelector(`[data-seat="${seat.seat}"]`) : fallbackTarget;
     if (pot && target) animateChipFlight(pot, target, winner.amount || 0, { reverse: true, count: 5 });
   }
 }

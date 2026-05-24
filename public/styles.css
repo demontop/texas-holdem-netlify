@@ -3163,6 +3163,142 @@ th {
   padding-bottom: 13.2svh;
 }
 
+.showdown-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: start center;
+  padding-top: 82px;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+.showdown-overlay.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.showdown-card {
+  width: min(620px, calc(100vw - 44px));
+  padding: 14px 18px 16px;
+  border: 1px solid rgba(255, 232, 142, 0.66);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(45, 28, 8, 0.96), rgba(9, 8, 18, 0.94)),
+    radial-gradient(circle at 50% 0%, rgba(255, 211, 91, 0.28), transparent 54%);
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.22),
+    0 22px 70px rgba(0, 0, 0, 0.62),
+    0 0 34px rgba(255, 206, 76, 0.18);
+  pointer-events: auto;
+  text-align: center;
+}
+
+.showdown-card h2 {
+  margin: 0 0 8px;
+  color: #ffe486;
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.showdown-winners {
+  display: grid;
+  gap: 6px;
+}
+
+.showdown-winners p {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 30px;
+  color: #fff;
+  font-weight: 900;
+}
+
+.showdown-winners span {
+  color: #2fff85;
+  font-size: 20px;
+}
+
+.showdown-winners em {
+  color: rgba(255, 245, 215, 0.8);
+  font-size: 13px;
+  font-style: normal;
+}
+
+.showdown-stacks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.showdown-stacks span {
+  min-width: 82px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 244, 220, 0.82);
+  font-size: 12px;
+}
+
+.showdown-stacks b {
+  color: #fff;
+}
+
+.table-shell .player-info {
+  z-index: 7;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 1px;
+  min-height: 36px;
+  height: auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 222, 150, 0.16);
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.table-shell .player-info strong {
+  display: block;
+  color: rgba(255, 244, 218, 0.88);
+  font-size: 10px;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.table-shell .player-info .stack-line {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.05;
+  text-align: center;
+}
+
+.table-shell .player-info .stack-line small {
+  color: rgba(255, 222, 150, 0.76);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.table-shell .player-info .stack-line b {
+  font: inherit;
+  color: #fff;
+}
+
+.table-shell .seat-0 .player-info {
+  width: 142px;
+}
+
 .fx-card-flight,
 .fx-chip-flight {
   position: fixed;
