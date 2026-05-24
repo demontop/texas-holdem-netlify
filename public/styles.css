@@ -591,6 +591,23 @@ h2 {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
 }
 
+.face-body b,
+.face-body i,
+.small-center b,
+.small-center i {
+  font: inherit;
+  font-style: normal;
+  line-height: 1;
+}
+
+.face-body {
+  gap: 1px;
+}
+
+.face-body i {
+  font-size: 0.62em;
+}
+
 .face-crown {
   position: absolute;
   top: 18%;
@@ -618,7 +635,7 @@ h2 {
 }
 
 .card.small .face-art {
-  inset: 26% 24%;
+  display: none;
 }
 
 .card.small .face-body {
@@ -634,8 +651,14 @@ h2 {
   inset: 0;
   display: grid;
   place-items: center;
-  font-size: 21px;
+  gap: 1px;
+  font-size: 18px;
+  font-weight: 900;
   opacity: 0.88;
+}
+
+.card.small .small-center i {
+  font-size: 0.76em;
 }
 
 .card.small.rank-a .pip-grid {
@@ -2905,6 +2928,239 @@ th {
     max-width: 680px;
     gap: 10px;
   }
+}
+
+/* Turn timer, compact seats, and in-game rules drawer */
+.table-shell .rules-toggle.active {
+  border-color: rgba(255, 228, 128, 0.72);
+  background: linear-gradient(180deg, rgba(255, 210, 88, 0.95), rgba(154, 99, 22, 0.95));
+  color: #211304;
+}
+
+.rules-drawer {
+  position: absolute;
+  top: 90px;
+  right: 22px;
+  z-index: 18;
+  width: min(360px, calc(100vw - 44px));
+  max-height: calc(100svh - 190px);
+  padding: 16px;
+  border: 1px solid rgba(255, 221, 145, 0.34);
+  border-radius: 10px;
+  background: rgba(10, 8, 24, 0.92);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.46);
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  pointer-events: none;
+}
+
+.rules-drawer.open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.rules-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.rules-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.rules-body {
+  display: grid;
+  gap: 10px;
+  max-height: calc(100svh - 260px);
+  overflow: auto;
+  color: rgba(255, 244, 224, 0.88);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.rules-body strong {
+  color: #ffe391;
+}
+
+.turn-countdown {
+  --turn-progress: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background:
+    conic-gradient(#ffe85d calc(var(--turn-progress) * 1turn), rgba(255, 255, 255, 0.18) 0),
+    rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 0 16px rgba(255, 232, 93, 0.26);
+}
+
+.turn-countdown span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(9, 7, 18, 0.88);
+}
+
+.turn-countdown.danger-time,
+.seat-timer.danger-time {
+  color: #fff;
+  background:
+    conic-gradient(#ff473f calc(var(--turn-progress) * 1turn), rgba(255, 255, 255, 0.18) 0),
+    rgba(0, 0, 0, 0.55);
+}
+
+.table-shell .seat {
+  width: 118px;
+  height: 104px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.table-shell .avatar-ring {
+  width: 72px;
+  height: 72px;
+  box-shadow:
+    0 0 0 3px rgba(29, 29, 48, 0.92),
+    0 0 0 5px rgba(205, 219, 255, 0.52),
+    0 10px 20px rgba(0, 0, 0, 0.44);
+}
+
+.table-shell .avatar-face {
+  width: 62px;
+  height: 62px;
+}
+
+.table-shell .avatar-face span {
+  font-size: 28px;
+}
+
+.table-shell .avatar-ring i {
+  right: -9px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+
+.table-shell .seat.turn .avatar-ring::after {
+  inset: -7px;
+}
+
+.seat-timer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background:
+    conic-gradient(#ffe85d calc(var(--turn-progress) * 1turn), rgba(255, 255, 255, 0.18) 0),
+    rgba(8, 6, 20, 0.78);
+  color: #fff;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.28);
+}
+
+.table-shell .hole-cards {
+  top: 50px;
+}
+
+.table-shell .hole-cards .card.small {
+  width: 27px;
+}
+
+.table-shell .player-info {
+  bottom: 4px;
+  width: 116px;
+  height: 28px;
+}
+
+.table-shell .player-info span {
+  font-size: 14px;
+}
+
+.table-shell .status-pill {
+  top: 78px;
+  max-width: 116px;
+  height: 21px;
+  min-height: 21px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.table-shell .seat-bet {
+  bottom: 42px;
+  min-width: 76px;
+}
+
+.table-shell .dealer {
+  top: 15px;
+  right: 13px;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.table-shell .seat-0 {
+  width: 190px;
+  height: 132px;
+}
+
+.table-shell .seat-0 .avatar-ring {
+  width: 82px;
+  height: 82px;
+}
+
+.table-shell .seat-0 .avatar-face {
+  width: 70px;
+  height: 70px;
+}
+
+.table-shell .seat-0 .hole-cards {
+  left: 138px;
+  top: 32px;
+}
+
+.table-shell .seat-0 .hole-cards .card.small {
+  width: clamp(54px, 4.4vw, 72px);
+}
+
+.table-shell .seat-0 .player-info {
+  left: 43px;
+  bottom: 8px;
+  width: 128px;
+}
+
+.table-shell .seat-0 .status-pill {
+  left: 142px;
+  top: 92px;
+}
+
+.table-shell .action-status {
+  bottom: 84px;
+}
+
+.table-shell .poker-room {
+  padding-bottom: 13.2svh;
 }
 
 .fx-card-flight,

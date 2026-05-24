@@ -6,6 +6,7 @@ const DB_KEY = "db.json";
 const STORE_NAME = "holdem-state";
 const LOCAL_DB_FILE = path.join(process.cwd(), ".data", "poker-db.json");
 const ACTIVE_STAGES = new Set(["preflop", "flop", "turn", "river"]);
+const ACTION_TIMEOUT_MS = 20000;
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
@@ -443,6 +444,7 @@ function startHand(table) {
   table.winners = [];
   table.revealed = false;
   table.detachedPlayers = [];
+  clearTurnDeadline(table);
 
   for (const player of seatedPlayers(table)) {
     player.hole = [];
@@ -477,6 +479,7 @@ function startHand(table) {
   postBlind(table, bigBlindSeat, table.bigBlind, "大盲");
 
   table.currentTurnSeat = nextSeat(table, bigBlindSeat, (player) => player.inHand && !player.folded && !player.allIn);
+  setTurnDeadline(table);
   addLog(table, `第 ${table.handNo} 手牌开始，${table.seats[smallBlindSeat].username} 小盲，${table.seats[bigBlindSeat].username} 大盲`);
 
   if (table.currentTurnSeat == null) runOutToShowdown(table);
@@ -512,6 +515,7 @@ function maybeAdvance(table, fromSeat) {
   }
 
   table.currentTurnSeat = findNextActor(table, fromSeat);
+  setTurnDeadline(table);
 }
 
 function advanceStreet(table) {
@@ -540,6 +544,7 @@ function advanceStreet(table) {
   }
 
   table.currentTurnSeat = nextSeat(table, table.dealerSeat, (player) => player.inHand && !player.folded && !player.allIn);
+  setTurnDeadline(table);
   addLog(table, `${stageName(table.status)} 开始`);
 }
 
@@ -570,6 +575,7 @@ function awardByFold(table, winner) {
   table.pot = 0;
   table.status = "showdown";
   table.currentTurnSeat = null;
+  clearTurnDeadline(table);
   table.revealed = false;
   for (const player of handPlayers(table)) {
     player.bet = 0;
@@ -625,6 +631,7 @@ function resolveShowdown(table) {
   });
   table.status = "showdown";
   table.currentTurnSeat = null;
+  clearTurnDeadline(table);
   table.revealed = true;
   table.pot = 0;
 
@@ -782,6 +789,8 @@ function publicTable(table, viewer) {
     bigBlind: table.bigBlind,
     dealerSeat: table.dealerSeat,
     currentTurnSeat: table.currentTurnSeat,
+    actionDeadlineAt: table.actionDeadlineAt || null,
+    actionTimeoutMs: ACTION_TIMEOUT_MS,
     currentBet: table.currentBet,
     minRaise: table.minRaise,
     handNo: table.handNo || 0,
@@ -801,7 +810,9 @@ function publicTable(table, viewer) {
       maxRaiseTo,
       canLeave: Boolean(viewerSeat),
       canDisband: Boolean(viewer && (viewer.isAdmin || table.ownerId === viewer.id)),
-      activeHand: ACTIVE_STAGES.has(table.status)
+      activeHand: ACTIVE_STAGES.has(table.status),
+      actionDeadlineAt: table.actionDeadlineAt || null,
+      actionTimeoutMs: ACTION_TIMEOUT_MS
     },
     seats: table.seats.map((player) => {
       if (!player) return null;
@@ -1083,6 +1094,50 @@ function touchTable(table) {
 
 function touchUser(user) {
   user.revision = Number(user.revision || 0) + 1;
+}
+
+function setTurnDeadline(table) {
+  const player = table.seats[table.currentTurnSeat];
+  if (ACTIVE_STAGES.has(table.status) && player && player.inHand && !player.folded && !player.allIn) {
+    table.actionDeadlineAt = new Date(Date.now() + ACTION_TIMEOUT_MS).toISOString();
+  } else {
+    table.actionDeadlineAt = null;
+  }
+}
+
+function clearTurnDeadline(table) {
+  table.actionDeadlineAt = null;
+}
+
+function isActionDeadlineExpired(table, at = Date.now()) {
+  if (!ACTIVE_STAGES.has(table.status) || table.currentTurnSeat == null || !table.actionDeadlineAt) return false;
+  return new Date(table.actionDeadlineAt).getTime() <= at;
+}
+
+function applyActionTimeouts(table, at = Date.now()) {
+  let changed = false;
+  let guard = 0;
+  while (isActionDeadlineExpired(table, at) && guard < table.maxSeats + 6) {
+    guard += 1;
+    const player = table.seats[table.currentTurnSeat];
+    if (!player || !player.inHand || player.folded || player.allIn) {
+      setTurnDeadline(table);
+      break;
+    }
+    player.folded = true;
+    player.acted = true;
+    player.lastAction = "超时弃牌";
+    addLog(table, `${player.username} 20 秒未行动，自动弃牌`);
+    maybeAdvance(table, player.seat);
+    changed = true;
+  }
+  return changed;
+}
+
+function runAutomaticTableActions(table) {
+  const timedOut = applyActionTimeouts(table);
+  const bots = processBotTurns(table);
+  return timedOut || bots;
 }
 
 function handleAction(table, user, body) {
@@ -1367,8 +1422,9 @@ exports.handler = async (event) => {
         if (seatedPlayers(table).length === 0) throw new HttpError(404, "牌桌已解散");
         const currentPlayer = table.seats[table.currentTurnSeat];
         const since = Number(event.queryStringParameters?.since || -1);
+        const needsAutomaticAction = Boolean(currentPlayer?.isBot || isActionDeadlineExpired(table));
 
-        if (!currentPlayer?.isBot) {
+        if (!needsAutomaticAction) {
           if (since >= Number(table.revision || 0)) {
             return json(200, {
               user: userPublic(user),
@@ -1385,7 +1441,7 @@ exports.handler = async (event) => {
           const freshUser = requireUser(freshDb, event, { refreshSession: false });
           const freshTable = getTableOrThrow(freshDb, segments[1]);
           if (seatedPlayers(freshTable).length === 0) throw new HttpError(404, "牌桌已解散");
-          const changed = processBotTurns(freshTable);
+          const changed = runAutomaticTableActions(freshTable);
           if (changed) touchTable(freshTable);
           return { user: userPublic(freshUser), table: publicTable(freshTable, freshUser) };
         });
@@ -1437,7 +1493,7 @@ exports.handler = async (event) => {
           assertFreshTableRevision(table, user, body);
           if (ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "手牌已经开始");
           startHand(table);
-          processBotTurns(table);
+          runAutomaticTableActions(table);
           touchTable(table);
           rememberCommand(table, user, body, "start");
           return { table: publicTable(table, user) };
@@ -1453,8 +1509,15 @@ exports.handler = async (event) => {
             return { table: publicTable(table, user), duplicate: true };
           }
           assertFreshTableRevision(table, user, body);
+          const timeoutChanged = applyActionTimeouts(table);
+          const player = table.seats.find((seat) => seat && seat.userId === user.id);
+          if (timeoutChanged && (!player || player.folded || player.allIn || table.currentTurnSeat !== player.seat)) {
+            runAutomaticTableActions(table);
+            touchTable(table);
+            return { table: publicTable(table, user), timedOut: true };
+          }
           handleAction(table, user, body);
-          processBotTurns(table);
+          runAutomaticTableActions(table);
           touchTable(table);
           rememberCommand(table, user, body, "action");
           return { table: publicTable(table, user) };

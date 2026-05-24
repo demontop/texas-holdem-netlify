@@ -20,6 +20,10 @@ const state = {
   animationTable: null,
   scrollLock: null,
   raiseDrawerOpen: false,
+  rulesOpen: false,
+  serverClockOffset: 0,
+  countdownTimer: null,
+  timeoutPollDeadline: "",
   admin: { users: [], tables: [], audit: [] }
 };
 
@@ -83,7 +87,7 @@ function cardHtml(card, small = false) {
     <div class="card card-face ${meta.color} rank-${meta.rawRank.toLowerCase()} ${isFace ? "face" : ""} ${small ? "small" : ""}">
       <span class="card-index top"><b>${meta.rank}</b><i>${meta.suit}</i></span>
       ${pips}
-      <span class="small-center">${meta.suit}</span>
+      <span class="small-center"><b>${meta.rank}</b><i>${meta.suit}</i></span>
       <span class="card-index bottom"><b>${meta.rank}</b><i>${meta.suit}</i></span>
     </div>
   `;
@@ -127,7 +131,7 @@ function faceCardHtml(meta) {
     <div class="face-art">
       <span class="face-title">${titles[meta.rawRank]}</span>
       <span class="face-crown">${meta.suit}</span>
-      <span class="face-body">${meta.rawRank}</span>
+      <span class="face-body"><b>${meta.rawRank}</b><i>${meta.suit}</i></span>
       <span class="face-suit">${meta.suit}</span>
     </div>
   `;
@@ -215,16 +219,23 @@ async function runBusy(task) {
 function applyServerPayload(payload) {
   if (!payload || typeof payload !== "object") return false;
   let changed = false;
+  if (payload.serverTime) syncServerClock(payload.serverTime);
   if (payload.user) {
     state.user = payload.user;
     changed = true;
   }
   if (payload.table) {
+    syncServerClock(payload.table.serverTime);
     state.table = payload.table;
     if (state.view !== "table") state.view = "table";
     changed = true;
   }
   return changed;
+}
+
+function syncServerClock(serverTime) {
+  const stamp = new Date(serverTime || "").getTime();
+  if (Number.isFinite(stamp)) state.serverClockOffset = stamp - Date.now();
 }
 
 function lockTableScroll() {
@@ -325,6 +336,7 @@ async function createTable(formElement) {
       }
     });
     state.user = result.user || state.user;
+    syncServerClock(result.table?.serverTime);
     state.table = result.table;
     state.view = "table";
     startPolling();
@@ -340,6 +352,7 @@ async function joinTable(tableId, seat = null) {
       body: { buyIn, seat, commandId: nextCommandId("join"), tableRevision: state.table?.revision || 0 }
     });
     state.user = result.user;
+    syncServerClock(result.table?.serverTime);
     state.table = result.table;
     state.view = "table";
     startPolling();
@@ -350,6 +363,7 @@ async function openTable(tableId) {
   await runBusy(async () => {
     const result = await api(`/tables/${tableId}`);
     state.user = result.user;
+    syncServerClock(result.table?.serverTime);
     state.table = result.table;
     state.view = "table";
     startPolling();
@@ -369,6 +383,7 @@ async function leaveTable() {
     state.user = result.user;
     state.table = null;
     state.view = "lobby";
+    state.rulesOpen = false;
     await loadLobby(true);
     stopPolling();
   });
@@ -386,6 +401,7 @@ async function disbandTable() {
     state.table = null;
     state.tables = result.tables || [];
     state.view = "lobby";
+    state.rulesOpen = false;
     stopPolling();
     await loadLobby(true);
   });
@@ -398,6 +414,7 @@ async function startHand() {
       method: "POST",
       body: { commandId: nextCommandId("start"), tableRevision: state.table.revision || 0 }
     });
+    syncServerClock(result.table?.serverTime);
     state.table = result.table;
   });
 }
@@ -414,6 +431,7 @@ async function playerAction(action, amount = null) {
         tableRevision: state.table.revision || 0
       }
     });
+    syncServerClock(result.table?.serverTime);
     state.table = result.table;
   });
 }
@@ -427,6 +445,7 @@ async function refreshTable(silent = true) {
   try {
     const result = await api(`/tables/${tableId}?since=${encodeURIComponent(since)}`);
     if (requestSeq !== state.tableRequestSeq || !state.table || state.table.id !== tableId) return false;
+    syncServerClock(result.table?.serverTime || result.serverTime);
     if (result.unchanged || !result.table) {
       if (result.user) state.user = result.user;
       return false;
@@ -695,6 +714,7 @@ function tableView() {
           <div class="logs">${logsHtml(table)}</div>
         </div>
       </aside>
+      ${rulesPanelHtml()}
     </main>
   `);
 }
@@ -710,9 +730,28 @@ function toolbarActionsHtml(table) {
   const canDisband = Boolean(table.controls?.canDisband);
   const activeHand = Boolean(table.controls?.activeHand);
   return `
+    <button class="ghost slim rules-toggle ${state.rulesOpen ? "active" : ""}" data-action="toggle-rules" aria-expanded="${state.rulesOpen ? "true" : "false"}">规则</button>
     <button class="primary slim" data-action="start-hand" ${canStart ? "" : "disabled"}>发牌</button>
     <button class="ghost slim" data-action="leave-table" ${canLeave ? "" : "disabled"}>${activeHand ? "弃牌离桌" : "离桌"}</button>
     <button class="danger slim" data-action="disband-table" ${canDisband ? "" : "disabled"}>解散桌子</button>
+  `;
+}
+
+function rulesPanelHtml() {
+  return `
+    <section class="rules-drawer ${state.rulesOpen ? "open" : ""}" data-rules-drawer aria-hidden="${state.rulesOpen ? "false" : "true"}">
+      <div class="rules-head">
+        <h2>德州扑克规则</h2>
+        <button class="ghost slim" data-action="toggle-rules">关闭</button>
+      </div>
+      <div class="rules-body">
+        <p><strong>目标</strong>：用自己的 2 张手牌和桌面 5 张公共牌，组成最大的 5 张牌牌型。</p>
+        <p><strong>流程</strong>：翻前下注，随后依次翻牌 3 张、转牌 1 张、河牌 1 张，每轮都可看牌、跟注、加注、全下或弃牌。</p>
+        <p><strong>行动时间</strong>：轮到玩家后有 20 秒操作，超时自动弃牌。</p>
+        <p><strong>牌型大小</strong>：皇家同花顺 &gt; 同花顺 &gt; 四条 &gt; 葫芦 &gt; 同花 &gt; 顺子 &gt; 三条 &gt; 两对 &gt; 一对 &gt; 高牌。</p>
+        <p><strong>摊牌</strong>：河牌下注结束后比牌；若其他玩家都弃牌，最后未弃牌者直接赢得底池。</p>
+      </div>
+    </section>
   `;
 }
 
@@ -781,6 +820,9 @@ function seatContentHtml(entry, table) {
   const dealer = table.dealerSeat === actualSeat;
   const holeCards = occupied && player.hole && player.hole.length ? player.hole : [null, null];
   const hasBet = occupied && Number(player.bet) > 0;
+  const isTurn = table.currentTurnSeat === actualSeat && table.controls?.activeHand;
+  const timerText = isTurn ? countdownText(table) : "";
+  const timerStyle = isTurn ? ` style="--turn-progress:${countdownPercent(table)}"` : "";
 
   if (!occupied) {
     const canJoin = table.youSeat == null && ["waiting", "showdown"].includes(table.status);
@@ -796,11 +838,12 @@ function seatContentHtml(entry, table) {
     <div class="seat-player">
       <span class="turn-pointer" aria-hidden="true">行动</span>
       ${dealer ? `<span class="dealer">D</span>` : ""}
-      <div class="avatar-ring" style="--avatar-hue:${avatarHue(player.username)}">
+      <div class="avatar-ring" style="--avatar-hue:${avatarHue(player.username)};--turn-progress:${countdownPercent(table)}">
         <div class="avatar-face">
           <span>${escapeHtml(avatarInitial(player.username))}</span>
         </div>
         <i>礼</i>
+        ${isTurn ? `<em class="seat-timer" data-seat-timer="${actualSeat}"${timerStyle}>${timerText}</em>` : ""}
       </div>
       <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
@@ -843,11 +886,13 @@ function actionPanel(controls, table) {
   const turnName = turnPlayerName(table);
   const drawerOpen = canRaise && state.raiseDrawerOpen;
   const activeHand = ["preflop", "flop", "turn", "river"].includes(table.status);
+  const countdown = countdownText(table);
   return `
     <div class="control-panel action-panel ${drawerOpen ? "raise-open" : ""} ${activeHand ? "" : "inactive-hand"}" data-control-mode="action" data-control-key="${controlKey(table)}" data-player-bet="${raise.playerBet}" data-current-bet="${table.currentBet || 0}">
       <div class="action-status">
         <span class="${canAct ? "live-dot" : ""}">${canAct ? "轮到你" : (turnName ? `${escapeHtml(turnName)} 行动` : stageLabel(table.status))}</span>
         <b>${toCall > 0 ? `需跟 ${money(toCall)}` : "可看牌"}</b>
+        ${countdown ? `<strong class="turn-countdown" data-countdown-ring style="--turn-progress:${countdownPercent(table)}"><span data-countdown-label>${countdown}</span></strong>` : ""}
       </div>
       <div class="raise-drawer" aria-hidden="${drawerOpen ? "false" : "true"}">
         <div class="raise-total">
@@ -904,6 +949,7 @@ function controlKey(table) {
     controls.toCall || 0,
     controls.minRaiseTo || 0,
     controls.maxRaiseTo || 0,
+    controls.actionDeadlineAt || table.actionDeadlineAt || "",
     table.youSeat ?? "",
     state.raiseDrawerOpen ? 1 : 0
   ].join("|");
@@ -912,6 +958,28 @@ function controlKey(table) {
 function turnPlayerName(table) {
   const player = table.seats?.[table.currentTurnSeat];
   return player?.username || "";
+}
+
+function actionDeadline(table = state.table) {
+  return table?.controls?.actionDeadlineAt || table?.actionDeadlineAt || "";
+}
+
+function remainingActionSeconds(table = state.table) {
+  const deadline = new Date(actionDeadline(table)).getTime();
+  if (!Number.isFinite(deadline)) return null;
+  const serverNow = Date.now() + (state.serverClockOffset || 0);
+  return Math.max(0, Math.ceil((deadline - serverNow) / 1000));
+}
+
+function countdownText(table = state.table) {
+  const seconds = remainingActionSeconds(table);
+  return seconds == null ? "" : `${seconds}s`;
+}
+
+function countdownPercent(table = state.table) {
+  const seconds = remainingActionSeconds(table);
+  const total = Math.max(1, Number(table?.controls?.actionTimeoutMs || table?.actionTimeoutMs || 20000) / 1000);
+  return seconds == null ? 0 : Math.max(0, Math.min(1, seconds / total));
 }
 
 function raiseCalculator(table) {
@@ -1042,6 +1110,7 @@ function render() {
   }
   state.renderedTableId = nextTableId;
   if (nextTableId) syncRaiseControls($app);
+  syncActionCountdown();
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
   scheduleTableAnimations(previousAnimationTable, state.view === "table" ? state.table : null);
@@ -1094,7 +1163,66 @@ function patchTableView(table) {
     panel.outerHTML = nextPanel;
   }
   syncRaiseControls(root);
+  syncRulesDrawer(root);
+  syncActionCountdown();
   setInnerHtml(root.querySelector(".logs"), logsHtml(table));
+}
+
+function syncRulesDrawer(root = document) {
+  const drawer = root.querySelector?.("[data-rules-drawer]");
+  if (!drawer) return;
+  drawer.classList.toggle("open", state.rulesOpen);
+  drawer.setAttribute("aria-hidden", state.rulesOpen ? "false" : "true");
+}
+
+function syncActionCountdown() {
+  const deadline = actionDeadline();
+  const isActive = state.view === "table" && state.table?.controls?.activeHand && deadline;
+  if (!isActive) {
+    stopCountdownTimer();
+    state.timeoutPollDeadline = "";
+    return;
+  }
+
+  updateActionCountdown();
+  if (!state.countdownTimer) {
+    state.countdownTimer = window.setInterval(updateActionCountdown, 250);
+  }
+}
+
+function stopCountdownTimer() {
+  if (state.countdownTimer) window.clearInterval(state.countdownTimer);
+  state.countdownTimer = null;
+}
+
+function updateActionCountdown() {
+  if (state.view !== "table" || !state.table) {
+    stopCountdownTimer();
+    return;
+  }
+
+  const deadline = actionDeadline();
+  if (!deadline) {
+    stopCountdownTimer();
+    return;
+  }
+
+  const label = countdownText();
+  const progress = countdownPercent();
+  document.querySelectorAll("[data-countdown-label], [data-seat-timer]").forEach((element) => {
+    element.textContent = label;
+  });
+  document.querySelectorAll("[data-countdown-ring], .seat.turn .avatar-ring, .seat.turn .seat-timer").forEach((element) => {
+    element.style.setProperty("--turn-progress", String(progress));
+    element.classList.toggle("danger-time", remainingActionSeconds() !== null && remainingActionSeconds() <= 5);
+  });
+
+  if (remainingActionSeconds() === 0 && state.timeoutPollDeadline !== deadline && !state.busy) {
+    state.timeoutPollDeadline = deadline;
+    refreshTable(false).then((changed) => {
+      if (changed) render();
+    });
+  }
 }
 
 function patchBoard(root, table) {
@@ -1486,6 +1614,7 @@ document.addEventListener("click", async (event) => {
   if (action === "lobby" || action === "back-lobby") {
     state.view = "lobby";
     state.table = null;
+    state.rulesOpen = false;
     stopPolling();
     await loadLobby();
     startPolling();
@@ -1495,6 +1624,10 @@ document.addEventListener("click", async (event) => {
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
   if (action === "disband-table") await disbandTable();
+  if (action === "toggle-rules") {
+    state.rulesOpen = !state.rulesOpen;
+    render();
+  }
   if (action === "toggle-raise") {
     state.raiseDrawerOpen = !state.raiseDrawerOpen;
     render();
