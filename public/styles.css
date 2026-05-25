@@ -1344,7 +1344,7 @@ th {
 }
 
 .table-title strong,
-.table-title span {
+.table-title [data-table-meta] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2045,10 +2045,52 @@ th {
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
 }
 
-.table-shell .table-title span {
+.table-shell .table-title [data-table-meta] {
   margin-top: 2px;
   color: rgba(255, 236, 202, 0.86);
   font-size: 13px;
+}
+
+.table-shell .table-title .table-subline {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.table-shell .ping-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 78px;
+  min-height: 20px;
+  padding: 2px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
+}
+
+.table-shell .ping-badge b {
+  color: #7df4b1;
+  font-size: 12px;
+}
+
+.table-shell .ping-badge.ok b {
+  color: #ffd86b;
+}
+
+.table-shell .ping-badge.slow b {
+  color: #ff8585;
+}
+
+.table-shell .ping-badge.unknown b {
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .table-shell .toolbar-actions {

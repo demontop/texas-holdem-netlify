@@ -50,6 +50,7 @@ const state = {
   rulesOpen: false,
   chatOpen: false,
   serverClockOffset: 0,
+  pingMs: null,
   countdownTimer: null,
   timeoutPollDeadline: "",
   bgmEnabled: localStorage.getItem(BGM_ENABLED_KEY) !== "0",
@@ -235,12 +236,15 @@ function setMessage(text) {
 async function api(path, options = {}) {
   const headers = { "content-type": "application/json", "x-client-id": state.clientId, ...(options.headers || {}) };
   if (state.token) headers.authorization = `Bearer ${state.token}`;
+  const trackPing = shouldTrackPing(path);
+  const startedAt = trackPing ? performance.now() : 0;
   const response = await fetch(`${API_BASE}${path}`, {
     method: options.method || "GET",
     cache: "no-store",
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
+  if (trackPing) recordPing(performance.now() - startedAt);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error || "请求失败");
@@ -249,6 +253,30 @@ async function api(path, options = {}) {
     throw error;
   }
   return payload;
+}
+
+function shouldTrackPing(path) {
+  return !String(path || "").startsWith("/admin/audio-upload");
+}
+
+function recordPing(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs < 0) return;
+  const sample = Math.max(1, Math.min(9999, Math.round(durationMs)));
+  state.pingMs = state.pingMs == null
+    ? sample
+    : Math.round(state.pingMs * 0.65 + sample * 0.35);
+  syncPingBadge();
+}
+
+function pingQuality(ms = state.pingMs) {
+  if (ms == null) return "unknown";
+  if (ms <= 120) return "good";
+  if (ms <= 260) return "ok";
+  return "slow";
+}
+
+function pingText() {
+  return state.pingMs == null ? "--ms" : `${state.pingMs}ms`;
 }
 
 async function runBusy(task) {
@@ -1069,7 +1097,10 @@ function tableView() {
         <button class="ghost" data-action="back-lobby">大厅</button>
         <div class="table-title">
           <strong data-table-title>${escapeHtml(table.name)}</strong>
-          <span data-table-meta>${tableMetaText(table)}</span>
+          <span class="table-subline">
+            <span data-table-meta>${tableMetaText(table)}</span>
+            ${pingBadgeHtml()}
+          </span>
         </div>
         <div class="toolbar-actions">${toolbarActionsHtml(table)}</div>
       </section>
@@ -1099,6 +1130,10 @@ function tableView() {
 
 function tableMetaText(table) {
   return `${stageLabel(table.status)} · 第 ${table.handNo || 0} 手牌 · ${table.smallBlind}/${table.bigBlind}`;
+}
+
+function pingBadgeHtml() {
+  return `<span class="ping-badge ${pingQuality()}" data-ping-badge>Ping <b data-ping-label>${pingText()}</b></span>`;
 }
 
 function tableLayoutClass(table) {
@@ -1781,6 +1816,7 @@ function patchTableView(table) {
   if (title) title.textContent = table.name;
   const meta = root.querySelector("[data-table-meta]");
   if (meta) meta.textContent = tableMetaText(table);
+  syncPingBadge(root);
   root.className = tableLayoutClass(table);
   patchToolbarActions(root, table);
 
@@ -2269,6 +2305,15 @@ function syncToast() {
   } else {
     shellElement.insertAdjacentHTML("beforeend", `<div class="toast">${html}</div>`);
   }
+}
+
+function syncPingBadge(root = document) {
+  const badge = root.querySelector("[data-ping-badge]");
+  if (!badge) return;
+  const quality = pingQuality();
+  badge.className = `ping-badge ${quality}`;
+  const label = badge.querySelector("[data-ping-label]");
+  if (label) label.textContent = pingText();
 }
 
 function setInnerHtml(element, html) {
