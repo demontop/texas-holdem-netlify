@@ -3,6 +3,7 @@ const STORAGE_KEY = "holdem_token";
 const CLIENT_KEY = "holdem_client_id";
 const BGM_ENABLED_KEY = "holdem_bgm_enabled";
 const AUDIO_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const AUDIO_UPLOAD_CHUNK_BYTES = 768 * 1024;
 const TAUNT_MESSAGES = [
   "跟得起吗？",
   "这把我收了",
@@ -996,8 +997,9 @@ async function collectAudioAsset(row) {
 
   if (!clear && file) {
     if (file.size > AUDIO_UPLOAD_MAX_BYTES) throw new Error(`音频文件不能超过 ${Math.round(AUDIO_UPLOAD_MAX_BYTES / 1024)}KB`);
-    src = await fileToDataUrl(file);
-    name = file.name;
+    const uploaded = await uploadAudioFile(file);
+    src = uploaded.src;
+    name = uploaded.name || file.name;
   } else if (!clear && srcInput?.value.trim()) {
     src = srcInput.value.trim();
     name = nameFromAudioSource(src);
@@ -1011,13 +1013,49 @@ async function collectAudioAsset(row) {
   return { src, name, volume, enabled: Boolean(src) };
 }
 
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("音频读取失败"));
-    reader.readAsDataURL(file);
+async function uploadAudioFile(file) {
+  const uploadId = makeAudioUploadId();
+  const totalChunks = Math.max(1, Math.ceil(file.size / AUDIO_UPLOAD_CHUNK_BYTES));
+  for (let index = 0; index < totalChunks; index += 1) {
+    const start = index * AUDIO_UPLOAD_CHUNK_BYTES;
+    const chunk = file.slice(start, Math.min(file.size, start + AUDIO_UPLOAD_CHUNK_BYTES));
+    const url = new URL(`${API_BASE}/admin/audio-upload/chunk`, window.location.origin);
+    url.searchParams.set("uploadId", uploadId);
+    url.searchParams.set("index", String(index));
+    url.searchParams.set("totalChunks", String(totalChunks));
+    url.searchParams.set("size", String(file.size));
+    const response = await fetch(url, {
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-client-id": state.clientId,
+        ...(state.token ? { authorization: `Bearer ${state.token}` } : {})
+      },
+      body: chunk
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "音频上传失败");
+  }
+
+  const response = await api("/admin/audio-upload/complete", {
+    method: "POST",
+    body: {
+      uploadId,
+      name: file.name,
+      mimeType: file.type || "audio/mpeg",
+      size: file.size,
+      totalChunks,
+      chunkSize: AUDIO_UPLOAD_CHUNK_BYTES
+    }
   });
+  if (!response.asset?.src) throw new Error("音频上传失败");
+  return response.asset;
+}
+
+function makeAudioUploadId() {
+  const random = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return random.replace(/[^a-z0-9_-]/gi, "").slice(0, 48);
 }
 
 function nameFromAudioSource(src) {

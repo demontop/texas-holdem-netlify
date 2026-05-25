@@ -18,6 +18,8 @@ const CHAT_HISTORY_LIMIT = 30;
 const QUICK_MESSAGE_LIMIT = 16;
 const TABLE_SEAT_OPTIONS = [3, 5, 7, 9];
 const DEFAULT_MAX_SEATS = 9;
+const AUDIO_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+const AUDIO_UPLOAD_CHUNK_MAX_BYTES = 1024 * 1024;
 const AUDIO_SOURCE_MAX_LENGTH = 28 * 1024 * 1024;
 const AUDIO_EVENT_LIMIT = 80;
 const AUDIO_ACTIONS = ["start", "deal", "fold", "check", "call", "bet", "raise", "allin", "blind", "timeout", "showdown"];
@@ -105,6 +107,24 @@ function json(statusCode, payload) {
       "access-control-allow-headers": "authorization,content-type,x-client-id"
     },
     body: JSON.stringify(payload)
+  };
+}
+
+function jsonResponse(statusCode, payload) {
+  return responseFromResult(json(statusCode, payload));
+}
+
+function requestToAuthEvent(request) {
+  const url = new URL(request.url);
+  const headers = {};
+  for (const [key, value] of request.headers.entries()) headers[key] = value;
+  return {
+    httpMethod: request.method,
+    path: url.pathname,
+    headers,
+    body: "",
+    isBase64Encoded: false,
+    queryStringParameters: Object.fromEntries(url.searchParams.entries())
   };
 }
 
@@ -202,6 +222,54 @@ function normalizeAudioSource(value) {
   if (src.length > AUDIO_SOURCE_MAX_LENGTH) throw new HttpError(400, "单个音频文件太大，请使用更短的音频或外链");
   if (/^https?:\/\//i.test(src) || /^\/[^\s]*$/i.test(src) || /^data:audio\/[a-z0-9.+-]+;base64,/i.test(src)) return src;
   throw new HttpError(400, "音频必须是 http(s) 地址、站内 /audio 路径，或上传的音频文件");
+}
+
+function cleanAudioUploadId(value) {
+  const id = String(value || "").trim();
+  if (!/^[a-zA-Z0-9_-]{12,80}$/.test(id)) throw new HttpError(400, "音频上传编号无效");
+  return id;
+}
+
+function audioChunkKey(uploadId, index) {
+  return `audio:${uploadId}:chunk:${index}`;
+}
+
+function audioPartKey(uploadId, index) {
+  return `audio:${uploadId}:part:${index}`;
+}
+
+function audioMetaKey(uploadId) {
+  return `audio:${uploadId}:meta`;
+}
+
+function cleanAudioName(name) {
+  return String(name || "audio")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "audio";
+}
+
+function normalizeAudioMimeType(value) {
+  const mime = String(value || "").trim().toLowerCase();
+  if (/^audio\/[a-z0-9.+-]+$/.test(mime)) return mime;
+  return "audio/mpeg";
+}
+
+function parseAudioRange(header, size) {
+  const match = String(header || "").match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+  let start = match[1] ? Number(match[1]) : 0;
+  let end = match[2] ? Number(match[2]) : size - 1;
+  if (!match[1] && match[2]) {
+    const suffix = Number(match[2]);
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+    throw new HttpError(416, "音频范围无效");
+  }
+  return { start, end: Math.min(end, size - 1) };
 }
 
 function clampNumber(value, min, max) {
@@ -1918,6 +1986,144 @@ export class PokerGame {
     return next;
   }
 
+  async requireUploadAdmin(request) {
+    const db = await this.readDb();
+    return requireAdmin(db, requestToAuthEvent(request), { refreshSession: false });
+  }
+
+  async handleAudioUploadChunk(request) {
+    if (request.method === "OPTIONS") return jsonResponse(204, {});
+    if (request.method !== "POST") return jsonResponse(405, { error: "只支持 POST" });
+    try {
+      await this.requireUploadAdmin(request);
+      const url = new URL(request.url);
+      const uploadId = cleanAudioUploadId(url.searchParams.get("uploadId"));
+      const index = clampInt(url.searchParams.get("index"), 0, 200);
+      const totalChunks = clampInt(url.searchParams.get("totalChunks"), 1, 200);
+      const declaredSize = clampInt(url.searchParams.get("size"), 1, AUDIO_UPLOAD_MAX_BYTES);
+      if (index >= totalChunks) throw new HttpError(400, "音频分片编号无效");
+      if (declaredSize > AUDIO_UPLOAD_MAX_BYTES) throw new HttpError(413, "音频文件不能超过 20MB");
+
+      const chunk = await request.arrayBuffer();
+      if (chunk.byteLength <= 0) throw new HttpError(400, "音频分片为空");
+      if (chunk.byteLength > AUDIO_UPLOAD_CHUNK_MAX_BYTES) throw new HttpError(413, "单个音频分片太大");
+      await this.state.storage.put(audioChunkKey(uploadId, index), chunk);
+      await this.state.storage.put(audioPartKey(uploadId, index), {
+        size: chunk.byteLength,
+        uploadedAt: nowIso()
+      });
+      return jsonResponse(200, { ok: true, uploadId, index });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      if (status >= 500) console.error(error);
+      return jsonResponse(status, { error: error.message || "音频上传失败" });
+    }
+  }
+
+  async handleAudioUploadComplete(request) {
+    if (request.method === "OPTIONS") return jsonResponse(204, {});
+    if (request.method !== "POST") return jsonResponse(405, { error: "只支持 POST" });
+    try {
+      const admin = await this.requireUploadAdmin(request);
+      const body = await request.json().catch(() => {
+        throw new HttpError(400, "请求体必须是 JSON");
+      });
+      const uploadId = cleanAudioUploadId(body.uploadId);
+      const totalChunks = clampInt(body.totalChunks, 1, 200);
+      const declaredSize = clampInt(body.size, 1, AUDIO_UPLOAD_MAX_BYTES);
+      const chunkSize = clampInt(body.chunkSize, 1, AUDIO_UPLOAD_CHUNK_MAX_BYTES);
+      if (declaredSize > AUDIO_UPLOAD_MAX_BYTES) throw new HttpError(413, "音频文件不能超过 20MB");
+
+      let totalSize = 0;
+      for (let index = 0; index < totalChunks; index += 1) {
+        const part = await this.state.storage.get(audioPartKey(uploadId, index));
+        if (!part) throw new HttpError(400, "音频分片未上传完整，请重新上传");
+        totalSize += Number(part.size || 0);
+      }
+      if (totalSize !== declaredSize) throw new HttpError(400, "音频分片大小不一致，请重新上传");
+
+      const meta = {
+        id: uploadId,
+        name: cleanAudioName(body.name),
+        mimeType: normalizeAudioMimeType(body.mimeType),
+        size: totalSize,
+        totalChunks,
+        chunkSize,
+        createdBy: admin.id,
+        createdAt: nowIso()
+      };
+      await this.state.storage.put(audioMetaKey(uploadId), meta);
+      return jsonResponse(200, {
+        ok: true,
+        asset: {
+          src: `/api/audio/${uploadId}`,
+          name: meta.name,
+          volume: 0.8,
+          enabled: true
+        }
+      });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      if (status >= 500) console.error(error);
+      return jsonResponse(status, { error: error.message || "音频上传失败" });
+    }
+  }
+
+  async handleAudioAsset(request) {
+    if (!["GET", "HEAD"].includes(request.method)) return jsonResponse(405, { error: "只支持 GET" });
+    try {
+      const url = new URL(request.url);
+      const uploadId = cleanAudioUploadId(url.pathname.split("/").filter(Boolean).pop());
+      const meta = await this.state.storage.get(audioMetaKey(uploadId));
+      if (!meta) throw new HttpError(404, "音频不存在");
+      const range = parseAudioRange(request.headers.get("range"), Number(meta.size || 0));
+      const start = range ? range.start : 0;
+      const end = range ? range.end : Number(meta.size || 0) - 1;
+      const contentLength = Math.max(0, end - start + 1);
+      const headers = {
+        "content-type": meta.mimeType || "audio/mpeg",
+        "cache-control": "public, max-age=31536000, immutable",
+        "accept-ranges": "bytes",
+        "content-length": String(contentLength)
+      };
+      if (range) headers["content-range"] = `bytes ${start}-${end}/${meta.size}`;
+      const body = request.method === "HEAD"
+        ? null
+        : this.audioStream(uploadId, meta, start, end);
+      return new Response(body, { status: range ? 206 : 200, headers });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      if (status >= 500) console.error(error);
+      const headers = status === 416 ? { "content-range": "bytes */0" } : undefined;
+      return new Response(error.message || "音频读取失败", { status, headers });
+    }
+  }
+
+  audioStream(uploadId, meta, start, end) {
+    const storage = this.state.storage;
+    const chunkSize = Number(meta.chunkSize || AUDIO_UPLOAD_CHUNK_MAX_BYTES);
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          let offset = start;
+          while (offset <= end) {
+            const chunkIndex = Math.floor(offset / chunkSize);
+            const chunk = await storage.get(audioChunkKey(uploadId, chunkIndex));
+            if (!chunk) throw new Error("音频分片缺失");
+            const chunkStart = chunkIndex * chunkSize;
+            const from = Math.max(0, offset - chunkStart);
+            const to = Math.min(chunk.byteLength, end - chunkStart + 1);
+            controller.enqueue(new Uint8Array(chunk.slice(from, to)));
+            offset = chunkStart + to;
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      }
+    });
+  }
+
   async handleWebSocket(request) {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket upgrade", { status: 426 });
@@ -2041,6 +2247,9 @@ export class PokerGame {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/api/ws") return this.handleWebSocket(request);
+    if (url.pathname === "/api/admin/audio-upload/chunk") return this.handleAudioUploadChunk(request);
+    if (url.pathname === "/api/admin/audio-upload/complete") return this.handleAudioUploadComplete(request);
+    if (url.pathname.startsWith("/api/audio/")) return this.handleAudioAsset(request);
     return responseFromResult(await handleApiRequest(request, this, this.env));
   }
 }
