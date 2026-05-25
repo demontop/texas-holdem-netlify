@@ -1866,7 +1866,6 @@ exports.handler = async (event) => {
           if (commandAlreadyApplied(table, user, body, "start")) {
             return { table: publicTable(table, user), duplicate: true };
           }
-          assertFreshTableRevision(table, user, body);
           if (ACTIVE_STAGES.has(table.status)) throw new HttpError(400, "手牌已经开始");
           startHand(table);
           runAutomaticTableActions(table);
@@ -1884,7 +1883,6 @@ exports.handler = async (event) => {
           if (commandAlreadyApplied(table, user, body, "action")) {
             return { table: publicTable(table, user), duplicate: true };
           }
-          assertFreshTableRevision(table, user, body);
           const timeoutChanged = applyActionTimeouts(table);
           const player = table.seats.find((seat) => seat && seat.userId === user.id);
           if (timeoutChanged && (!player || player.folded || player.allIn || table.currentTurnSeat !== player.seat)) {

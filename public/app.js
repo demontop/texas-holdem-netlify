@@ -53,7 +53,11 @@ const state = {
   timeoutPollDeadline: "",
   bgmEnabled: localStorage.getItem(BGM_ENABLED_KEY) !== "0",
   audioLastSeqByTable: {},
-  admin: { users: [], tables: [], quickMessages: [], audioSettings: defaultAudioSettings(), audit: [] }
+  admin: { users: [], tables: [], quickMessages: [], audioSettings: defaultAudioSettings(), audit: [] },
+  pointerActive: false,
+  deferRealtimeRenderUntil: 0,
+  realtimeRenderTimer: null,
+  realtimeRenderPending: false
 };
 
 const $app = document.querySelector("#app");
@@ -288,6 +292,56 @@ function applyServerPayload(payload) {
     changed = true;
   }
   return changed;
+}
+
+function requestRealtimeRender() {
+  state.realtimeRenderPending = true;
+  if (state.busy || shouldDeferRealtimeRender()) {
+    queueRealtimeRender();
+    return;
+  }
+  state.realtimeRenderPending = false;
+  render();
+}
+
+function queueRealtimeRender(delay = 120) {
+  if (!state.realtimeRenderPending) return;
+  if (state.realtimeRenderTimer) return;
+  state.realtimeRenderTimer = window.setTimeout(() => {
+    state.realtimeRenderTimer = null;
+    if (!state.realtimeRenderPending) return;
+    if (state.busy || shouldDeferRealtimeRender()) {
+      queueRealtimeRender(160);
+      return;
+    }
+    state.realtimeRenderPending = false;
+    render();
+  }, delay);
+}
+
+function shouldDeferRealtimeRender() {
+  return state.pointerActive || Date.now() < state.deferRealtimeRenderUntil || isEditingFormControl();
+}
+
+function isEditingFormControl() {
+  const active = document.activeElement;
+  if (!active) return false;
+  if (active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement) return true;
+  if (active instanceof HTMLInputElement) {
+    return !["button", "checkbox", "radio", "range", "submit"].includes(active.type);
+  }
+  return Boolean(active.isContentEditable);
+}
+
+function markPointerActive() {
+  state.pointerActive = true;
+  state.deferRealtimeRenderUntil = Date.now() + 500;
+}
+
+function releasePointerActive() {
+  state.pointerActive = false;
+  state.deferRealtimeRenderUntil = Date.now() + 180;
+  if (state.realtimeRenderPending) queueRealtimeRender(190);
 }
 
 function syncServerClock(serverTime) {
@@ -735,10 +789,15 @@ async function handleRealtimeMessage(raw) {
     if (payload.user) state.user = payload.user;
     if (Array.isArray(payload.tables)) state.tables = payload.tables;
     if (!state.table && state.view !== "admin") state.view = "lobby";
-    if (!state.busy && state.view === "lobby") render();
+    if (state.view === "lobby") requestRealtimeRender();
     return;
   }
   if (payload.type === "table") {
+    const payloadTableId = payload.tableId || payload.table?.id || null;
+    const currentTableId = state.table?.id || null;
+    const wantedTableId = wantedRealtimeTableId();
+    const isCurrentTable = Boolean(payloadTableId && (payloadTableId === currentTableId || payloadTableId === wantedTableId));
+    if (!isCurrentTable) return;
     if (payload.user) state.user = payload.user;
     if (payload.table) {
       state.table = payload.table;
@@ -749,7 +808,7 @@ async function handleRealtimeMessage(raw) {
       await loadLobby(true);
       setMessage("牌桌已解散");
     }
-    if (!state.busy) render();
+    requestRealtimeRender();
   }
 }
 
@@ -1024,16 +1083,7 @@ function authView() {
 }
 
 function lobbyView() {
-  const tables = state.tables.map((table) => `
-    <article class="table-row">
-      <div>
-        <h3>${escapeHtml(table.name)}</h3>
-        <p>${stageLabel(table.status)} · ${table.players}/${table.maxSeats} 人 · ${table.smallBlind}/${table.bigBlind}</p>
-      </div>
-      <div class="row-pot">${chipStackHtml(table.pot || table.bigBlind * 10, true)}</div>
-      <button class="primary slim" data-open-table="${table.id}">进桌</button>
-    </article>
-  `).join("");
+  const tables = state.tables.map(lobbyTableRowHtml).join("");
 
   return shell(`
     <main class="lobby">
@@ -1079,6 +1129,23 @@ function lobbyView() {
       </aside>
     </main>
   `);
+}
+
+function lobbyTableRowHtml(table) {
+  return `
+    <article class="table-row" data-table-row="${escapeAttr(table.id)}">
+      <div>
+        <h3 data-table-row-name>${escapeHtml(table.name)}</h3>
+        <p data-table-row-meta>${lobbyTableMeta(table)}</p>
+      </div>
+      <div class="row-pot" data-table-row-pot>${chipStackHtml(table.pot || table.bigBlind * 10, true)}</div>
+      <button class="primary slim" data-open-table="${escapeAttr(table.id)}">进桌</button>
+    </article>
+  `;
+}
+
+function lobbyTableMeta(table) {
+  return `${stageLabel(table.status)} · ${table.players}/${table.maxSeats} 人 · ${table.smallBlind}/${table.bigBlind}`;
 }
 
 function tableView() {
@@ -1745,7 +1812,11 @@ function render() {
   } else if (state.view === "admin") {
     $app.innerHTML = adminView();
   } else {
-    $app.innerHTML = lobbyView();
+    if ($app.querySelector(".lobby")) {
+      patchLobbyView();
+    } else {
+      $app.innerHTML = lobbyView();
+    }
   }
   state.renderedTableId = nextTableId;
   if (!nextTableId) clearTableEffects();
@@ -1757,6 +1828,42 @@ function render() {
   syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : null);
   state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
   syncRealtimeSubscription();
+}
+
+function patchLobbyView() {
+  syncShellChrome();
+  const list = $app.querySelector(".tables-list");
+  if (!list) {
+    $app.innerHTML = lobbyView();
+    return;
+  }
+
+  const nextIds = new Set(state.tables.map((table) => String(table.id)));
+  for (const table of state.tables) {
+    let row = list.querySelector(`[data-table-row="${table.id}"]`);
+    if (!row) {
+      const empty = list.querySelector(".empty-state");
+      if (empty) empty.remove();
+      list.insertAdjacentHTML("beforeend", lobbyTableRowHtml(table));
+      row = list.querySelector(`[data-table-row="${table.id}"]`);
+    }
+    if (!row) continue;
+    const name = row.querySelector("[data-table-row-name]");
+    if (name && name.textContent !== table.name) name.textContent = table.name;
+    const meta = row.querySelector("[data-table-row-meta]");
+    const metaText = lobbyTableMeta(table);
+    if (meta && meta.textContent !== metaText) meta.textContent = metaText;
+    setInnerHtml(row.querySelector("[data-table-row-pot]"), chipStackHtml(table.pot || table.bigBlind * 10, true));
+    const button = row.querySelector("[data-open-table]");
+    if (button) button.dataset.openTable = table.id;
+  }
+
+  for (const row of list.querySelectorAll("[data-table-row]")) {
+    if (!nextIds.has(row.dataset.tableRow)) row.remove();
+  }
+  if (!state.tables.length && !list.querySelector(".empty-state")) {
+    list.innerHTML = `<div class="empty-state">暂无牌桌</div>`;
+  }
 }
 
 function patchTableView(table) {
@@ -1772,7 +1879,7 @@ function patchTableView(table) {
   const meta = root.querySelector("[data-table-meta]");
   if (meta) meta.textContent = tableMetaText(table);
   root.className = tableLayoutClass(table);
-  setInnerHtml(root.querySelector(".toolbar-actions"), toolbarActionsHtml(table));
+  patchToolbarActions(root, table);
 
   const felt = root.querySelector(".felt-table");
   if (felt) felt.className = `felt-table seats-${table.maxSeats || 9}`;
@@ -1798,6 +1905,45 @@ function patchTableView(table) {
   syncRulesDrawer(root);
   syncActionCountdown();
   setInnerHtml(root.querySelector(".logs"), logsHtml(table));
+}
+
+function patchToolbarActions(root, table) {
+  const toolbar = root.querySelector(".toolbar-actions");
+  if (!toolbar) return;
+  if (!toolbar.querySelector('[data-action="start-hand"]')) {
+    setInnerHtml(toolbar, toolbarActionsHtml(table));
+    return;
+  }
+
+  const isSeated = table.youSeat != null;
+  const canStart = isSeated && ["waiting", "showdown"].includes(table.status);
+  const canLeave = Boolean(table.controls?.canLeave);
+  const canDisband = Boolean(table.controls?.canDisband);
+  const activeHand = Boolean(table.controls?.activeHand);
+
+  const bgm = toolbar.querySelector('[data-action="toggle-bgm"]');
+  if (bgm) {
+    bgm.classList.toggle("active", state.bgmEnabled);
+    bgm.textContent = state.bgmEnabled ? "音乐开" : "静音";
+  }
+
+  const rules = toolbar.querySelector('[data-action="toggle-rules"]');
+  if (rules) {
+    rules.classList.toggle("active", state.rulesOpen);
+    rules.setAttribute("aria-expanded", state.rulesOpen ? "true" : "false");
+  }
+
+  const start = toolbar.querySelector('[data-action="start-hand"]');
+  if (start) start.disabled = !canStart;
+
+  const leave = toolbar.querySelector('[data-action="leave-table"]');
+  if (leave) {
+    leave.disabled = !canLeave;
+    leave.textContent = activeHand ? "弃牌离桌" : "离桌";
+  }
+
+  const disband = toolbar.querySelector('[data-action="disband-table"]');
+  if (disband) disband.disabled = !canDisband;
 }
 
 function syncTauntPanel(root, table) {
@@ -2307,12 +2453,17 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("pointerdown", (event) => {
+  markPointerActive();
   const target = event.target.closest("button");
   if (!target) return;
   if (target.dataset.actionMove || target.dataset.action === "start-hand") {
     lockTableScroll();
   }
 }, true);
+
+document.addEventListener("pointerup", releasePointerActive, true);
+document.addEventListener("pointercancel", releasePointerActive, true);
+document.addEventListener("blur", releasePointerActive, true);
 
 document.addEventListener("input", (event) => {
   const target = event.target;
