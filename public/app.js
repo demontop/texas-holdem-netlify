@@ -2,7 +2,7 @@ const API_BASE = "/api";
 const STORAGE_KEY = "holdem_token";
 const CLIENT_KEY = "holdem_client_id";
 const BGM_ENABLED_KEY = "holdem_bgm_enabled";
-const AUDIO_UPLOAD_MAX_BYTES = 280 * 1024;
+const AUDIO_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
 const TAUNT_MESSAGES = [
   "跟得起吗？",
   "这把我收了",
