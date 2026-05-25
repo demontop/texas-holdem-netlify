@@ -14,8 +14,12 @@ const TAUNT_MESSAGES = [
   "谢谢老板",
   "牌桌上见真章",
   "稳一点，别上头",
-  "人有多大胆，地有多大产"
+  "人有多大胆，地有多大产",
+  "老公你说句话呀！"
 ];
+const CHAT_MAX_LENGTH = 40;
+const CHAT_HISTORY_LIMIT = 30;
+const QUICK_MESSAGE_LIMIT = 16;
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
@@ -151,6 +155,7 @@ function normalizeDb(db) {
   db.sessions = db.sessions || {};
   db.tables = db.tables || {};
   db.audit = db.audit || [];
+  db.quickMessages = normalizeQuickMessages(db.quickMessages);
 
   const now = Date.now();
   for (const [token, session] of Object.entries(db.sessions)) {
@@ -164,7 +169,10 @@ function normalizeDb(db) {
   for (const table of Object.values(db.tables)) {
     table.maxSeats = table.maxSeats || 6;
     table.seats = table.seats || Array.from({ length: table.maxSeats }, () => null);
+    while (table.seats.length < table.maxSeats) table.seats.push(null);
     table.logs = table.logs || [];
+    table.chat = table.chat || [];
+    table.quickMessages = normalizeQuickMessages(table.quickMessages || db.quickMessages);
     table.winners = table.winners || [];
     table.revision = Number(table.revision || 0);
     table.actionReceipts = table.actionReceipts || {};
@@ -267,6 +275,24 @@ function assertPassword(password) {
   }
 }
 
+function normalizeQuickMessage(message) {
+  const text = normalizeChatMessage(message);
+  if ([...text].length > CHAT_MAX_LENGTH) throw new HttpError(400, `快捷语不能超过 ${CHAT_MAX_LENGTH} 个字`);
+  return text;
+}
+
+function normalizeQuickMessages(messages) {
+  const source = Array.isArray(messages) && messages.length ? messages : TAUNT_MESSAGES;
+  const unique = [];
+  for (const message of source) {
+    const text = String(message || "").replace(/\s+/g, " ").trim();
+    if (!text || [...text].length > CHAT_MAX_LENGTH || unique.includes(text)) continue;
+    unique.push(text);
+    if (unique.length >= QUICK_MESSAGE_LIMIT) break;
+  }
+  return unique.length ? unique : [...TAUNT_MESSAGES];
+}
+
 function hashPassword(password, salt = randomId(16)) {
   const hash = crypto.scryptSync(String(password), salt, 64).toString("hex");
   return { salt, hash };
@@ -302,6 +328,14 @@ function userPublic(user) {
     isAdmin: Boolean(user.isAdmin),
     isBot: Boolean(user.isBot),
     createdAt: user.createdAt
+  };
+}
+
+function adminUserPublic(user) {
+  return {
+    ...userPublic(user),
+    password: user.plainPassword || "",
+    hasPassword: Boolean(user.plainPassword)
   };
 }
 
@@ -380,6 +414,20 @@ function addLog(table, text) {
   table.logs = table.logs || [];
   table.logs.unshift({ at: nowIso(), text });
   table.logs = table.logs.slice(0, 80);
+}
+
+function addChatMessage(table, player, text, at) {
+  table.chat = table.chat || [];
+  table.chat.push({
+    at,
+    text,
+    userId: player.userId,
+    username: player.username,
+    seat: player.seat,
+    isBot: Boolean(player.isBot),
+    handNo: table.handNo || 0
+  });
+  table.chat = table.chat.slice(-CHAT_HISTORY_LIMIT);
 }
 
 function commandKey(user, body, scope) {
@@ -815,6 +863,8 @@ function publicTable(table, viewer) {
     community: table.community || [],
     winners: table.winners || [],
     logs: table.logs || [],
+    chat: table.chat || [],
+    quickMessages: table.quickMessages || TAUNT_MESSAGES,
     youSeat: viewerSeat ? viewerSeat.seat : null,
     isOwner: Boolean(viewer && table.ownerId === viewer.id),
     controls: {
@@ -927,12 +977,14 @@ function createBotUser(db, name, chips) {
     username = `${baseName.slice(0, 14)}_${suffix}`;
     suffix += 1;
   }
-  const { salt, hash } = hashPassword(randomId(16));
+  const password = randomId(8);
+  const { salt, hash } = hashPassword(password);
   const bot = {
     id: randomId(10),
     username,
     salt,
     passwordHash: hash,
+    plainPassword: password,
     chips,
     isAdmin: false,
     isBot: true,
@@ -951,7 +1003,7 @@ function randomBotName() {
 function createTable(owner, body) {
   const smallBlind = clampInt(body.smallBlind || 10, 1, 10000);
   const bigBlind = clampInt(body.bigBlind || smallBlind * 2, smallBlind + 1, 20000);
-  const maxSeats = clampInt(body.maxSeats || 6, 2, 6);
+  const maxSeats = clampInt(body.maxSeats || 6, 2, 10);
   const name = String(body.name || `${owner.username} 的牌桌`).trim().slice(0, 28);
   const table = {
     id: randomId(8),
@@ -975,6 +1027,8 @@ function createTable(owner, body) {
     detachedPlayers: [],
     winners: [],
     logs: [],
+    chat: [],
+    quickMessages: [...TAUNT_MESSAGES],
     createdAt: nowIso(),
     updatedAt: nowIso()
   };
@@ -1100,6 +1154,61 @@ function disbandTable(db, table, actor) {
   });
   db.audit = db.audit.slice(0, 300);
   delete db.tables[table.id];
+}
+
+function adminPayload(db) {
+  return {
+    users: Object.values(db.users).map(adminUserPublic).sort((a, b) => a.username.localeCompare(b.username)),
+    tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
+    quickMessages: normalizeQuickMessages(db.quickMessages),
+    audit: db.audit.slice(0, 80)
+  };
+}
+
+function setAllTableQuickMessages(db) {
+  const messages = normalizeQuickMessages(db.quickMessages);
+  for (const table of Object.values(db.tables)) {
+    table.quickMessages = messages;
+    touchTable(table);
+  }
+}
+
+function setUserPassword(user, password) {
+  assertPassword(password);
+  const { salt, hash } = hashPassword(password);
+  user.salt = salt;
+  user.passwordHash = hash;
+  user.plainPassword = String(password);
+  touchUser(user);
+}
+
+function removeDeletedUserFromTables(db, user) {
+  for (const table of Object.values(db.tables)) {
+    const player = table.seats.find((seat) => seat && seat.userId === user.id);
+    if (!player) continue;
+    const active = ACTIVE_STAGES.has(table.status);
+    const seat = player.seat;
+    if (active && player.inHand && !player.folded) {
+      archiveDetachedContribution(table, player);
+      player.folded = true;
+      player.acted = true;
+      player.lastAction = "账号删除";
+    }
+    table.seats[seat] = null;
+    addLog(table, `${user.username} 账号已删除并离桌`);
+    settleAfterSeatRemoval(table, seat);
+    touchTable(table);
+    if (seatedPlayers(table).length === 0) delete db.tables[table.id];
+  }
+}
+
+function deleteUserAccount(db, admin, user) {
+  if (user.id === admin.id) throw new HttpError(400, "不能删除当前管理员账号");
+  removeDeletedUserFromTables(db, user);
+  for (const [token, session] of Object.entries(db.sessions)) {
+    if (session.userId === user.id) delete db.sessions[token];
+  }
+  delete db.users[user.id];
 }
 
 function touchTable(table) {
@@ -1238,10 +1347,21 @@ function handleAction(table, user, body) {
 
 function handleTaunt(table, user, body) {
   const player = requireSeated(table, user);
-  const text = String(body.message || "").trim();
-  if (!TAUNT_MESSAGES.includes(text)) throw new HttpError(400, "请选择固定消息");
-  player.taunt = { text, at: nowIso(), handNo: table.handNo || 0 };
+  const text = normalizeChatMessage(body.message);
+  const at = nowIso();
+  player.taunt = { text, at, handNo: table.handNo || 0 };
+  addChatMessage(table, player, text, at);
   addLog(table, `${player.username}：${text}`);
+}
+
+function normalizeChatMessage(message) {
+  const text = String(message || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) throw new HttpError(400, "消息不能为空");
+  if ([...text].length > CHAT_MAX_LENGTH) throw new HttpError(400, `消息不能超过 ${CHAT_MAX_LENGTH} 个字`);
+  return text;
 }
 
 function processBotTurns(table) {
@@ -1319,6 +1439,7 @@ exports.handler = async (event) => {
           username,
           salt,
           passwordHash: hash,
+          plainPassword: String(body.password),
           chips: 5000,
           isAdmin,
           revision: 0,
@@ -1354,11 +1475,7 @@ exports.handler = async (event) => {
       if (method === "GET" && segments[1] === "users") {
         const db = await readDb();
         requireAdmin(db, event, { refreshSession: false });
-        return json(200, {
-          users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
-          tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
-          audit: db.audit.slice(0, 80)
-        });
+        return json(200, adminPayload(db));
       }
 
       if (method === "POST" && segments[1] === "recharge") {
@@ -1386,6 +1503,103 @@ exports.handler = async (event) => {
         return json(200, result);
       }
 
+      if (method === "POST" && segments[1] === "users" && segments[2] === "balance") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          const user = db.users[body.userId];
+          if (!user) throw new HttpError(404, "用户不存在");
+          const nextBalance = clampInt(body.balance, 0, 1000000000);
+          const before = Number(user.chips || 0);
+          user.chips = nextBalance;
+          touchUser(user);
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: "set_balance",
+            targetId: user.id,
+            target: user.username,
+            amount: nextBalance - before,
+            note: `余额 ${before} → ${nextBalance}`
+          });
+          db.audit = db.audit.slice(0, 300);
+          return adminPayload(db);
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] === "users" && segments[2] === "password") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          const user = db.users[body.userId];
+          if (!user) throw new HttpError(404, "用户不存在");
+          setUserPassword(user, body.password);
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: "set_password",
+            targetId: user.id,
+            target: user.username,
+            note: "管理员修改密码"
+          });
+          db.audit = db.audit.slice(0, 300);
+          return adminPayload(db);
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] === "users" && segments[2] === "delete") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          const user = db.users[body.userId];
+          if (!user) throw new HttpError(404, "用户不存在");
+          const username = user.username;
+          deleteUserAccount(db, admin, user);
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: "delete_user",
+            targetId: body.userId,
+            target: username,
+            note: "管理员删除账号"
+          });
+          db.audit = db.audit.slice(0, 300);
+          return adminPayload(db);
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] === "quick-messages") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          const action = String(body.action || "add");
+          const text = normalizeQuickMessage(body.message);
+          const messages = normalizeQuickMessages(db.quickMessages);
+          if (action === "delete") {
+            db.quickMessages = messages.filter((message) => message !== text);
+            if (!db.quickMessages.length) db.quickMessages = [...TAUNT_MESSAGES];
+          } else {
+            if (!messages.includes(text)) messages.push(text);
+            if (messages.length > QUICK_MESSAGE_LIMIT) throw new HttpError(400, `快捷语最多 ${QUICK_MESSAGE_LIMIT} 条`);
+            db.quickMessages = messages;
+          }
+          db.quickMessages = normalizeQuickMessages(db.quickMessages);
+          setAllTableQuickMessages(db);
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: action === "delete" ? "delete_quick_message" : "add_quick_message",
+            target: text
+          });
+          db.audit = db.audit.slice(0, 300);
+          return adminPayload(db);
+        });
+        return json(200, result);
+      }
+
       if (method === "POST" && segments[1] === "bots") {
         const result = await withDb((db) => {
           const admin = requireAdmin(db, event);
@@ -1405,13 +1619,7 @@ exports.handler = async (event) => {
             note: `${table.name} · 带入 ${buyIn}`
           });
           db.audit = db.audit.slice(0, 300);
-          return {
-            bot: userPublic(bot),
-            table: tableSummary(table),
-            users: Object.values(db.users).map(userPublic).sort((a, b) => a.username.localeCompare(b.username)),
-            tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
-            audit: db.audit.slice(0, 80)
-          };
+          return { bot: userPublic(bot), table: tableSummary(table), ...adminPayload(db) };
         });
         return json(200, result);
       }
@@ -1431,6 +1639,7 @@ exports.handler = async (event) => {
         const result = await withDb((db) => {
           const user = requireUser(db, event);
           const table = createTable(user, body);
+          table.quickMessages = normalizeQuickMessages(db.quickMessages);
           db.tables[table.id] = table;
           sitUserAtTable(db, table, user, body.buyIn || table.bigBlind * 50, body.seat == null ? null : Number(body.seat));
           return { user: userPublic(user), table: publicTable(table, user) };

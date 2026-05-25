@@ -8,8 +8,10 @@ const TAUNT_MESSAGES = [
   "谢谢老板",
   "牌桌上见真章",
   "稳一点，别上头",
-  "人有多大胆，地有多大产"
+  "人有多大胆，地有多大产",
+  "老公你说句话呀！"
 ];
+const CHAT_MAX_LENGTH = 40;
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -34,7 +36,7 @@ const state = {
   serverClockOffset: 0,
   countdownTimer: null,
   timeoutPollDeadline: "",
-  admin: { users: [], tables: [], audit: [] }
+  admin: { users: [], tables: [], quickMessages: [], audit: [] }
 };
 
 const $app = document.querySelector("#app");
@@ -461,25 +463,40 @@ async function playerAction(action, amount = null) {
   });
 }
 
-async function sendTaunt(message) {
-  if (!state.table || !TAUNT_MESSAGES.includes(message)) return;
+async function sendChatMessage(message, options = {}) {
+  const text = String(message || "").replace(/\s+/g, " ").trim();
+  if (!state.table || !text) return;
+  if ([...text].length > CHAT_MAX_LENGTH) {
+    setMessage(`消息不能超过 ${CHAT_MAX_LENGTH} 个字`);
+    return;
+  }
   try {
     const result = await api(`/tables/${state.table.id}/taunt`, {
       method: "POST",
       body: {
-        message,
+        message: text,
         commandId: nextCommandId("taunt"),
         tableRevision: state.table.revision || 0
       }
     });
     syncServerClock(result.table?.serverTime);
     state.table = result.table;
-    state.chatOpen = false;
+    if (options.closePresets) state.chatOpen = false;
     render();
+    requestAnimationFrame(() => scrollChatScreen());
+    return true;
   } catch (error) {
     applyServerPayload(error.payload);
     setMessage(error.message || "消息发送失败");
+    return false;
   }
+}
+
+async function submitChatMessage(formElement) {
+  const input = formElement.querySelector("[data-chat-input]");
+  const message = input?.value || "";
+  const sent = await sendChatMessage(message);
+  if (sent && input) input.value = "";
 }
 
 async function refreshTable(silent = true) {
@@ -563,9 +580,18 @@ function stopPollTimer() {
 async function loadAdmin() {
   await runBusy(async () => {
     const result = await api("/admin/users");
-    state.admin = result;
+    applyAdminPayload(result);
     state.view = "admin";
   });
+}
+
+function applyAdminPayload(payload) {
+  state.admin = {
+    users: payload?.users || [],
+    tables: payload?.tables || [],
+    quickMessages: payload?.quickMessages || TAUNT_MESSAGES,
+    audit: payload?.audit || []
+  };
 }
 
 async function recharge(formElement) {
@@ -579,9 +605,55 @@ async function recharge(formElement) {
         note: form.get("note")
       }
     });
-    state.admin = await api("/admin/users");
+    applyAdminPayload(await api("/admin/users"));
     if (state.user && result.user.id === state.user.id) state.user = result.user;
     setMessage(`${result.user.username} 当前钱包 ${money(result.user.chips)}`);
+  });
+}
+
+async function setBalance(formElement) {
+  const form = new FormData(formElement);
+  await runBusy(async () => {
+    const result = await api("/admin/users/balance", {
+      method: "POST",
+      body: {
+        userId: form.get("userId"),
+        balance: Number(form.get("balance"))
+      }
+    });
+    applyAdminPayload(result);
+    const updated = state.admin.users.find((user) => user.id === form.get("userId"));
+    if (state.user && updated?.id === state.user.id) state.user = { ...state.user, chips: updated.chips, revision: updated.revision };
+    setMessage(`${updated?.username || "账号"} 余额已设置为 ${money(updated?.chips || 0)}`);
+  });
+}
+
+async function setAdminPassword(formElement) {
+  const form = new FormData(formElement);
+  await runBusy(async () => {
+    const result = await api("/admin/users/password", {
+      method: "POST",
+      body: {
+        userId: form.get("userId"),
+        password: form.get("password")
+      }
+    });
+    applyAdminPayload(result);
+    const updated = state.admin.users.find((user) => user.id === form.get("userId"));
+    setMessage(`${updated?.username || "账号"} 密码已更新`);
+  });
+}
+
+async function deleteAdminUser(userId) {
+  const user = state.admin.users.find((item) => item.id === userId);
+  if (!user || !window.confirm(`确定删除账号「${user.username}」吗？该玩家会被移出所有牌桌。`)) return;
+  await runBusy(async () => {
+    const result = await api("/admin/users/delete", {
+      method: "POST",
+      body: { userId }
+    });
+    applyAdminPayload(result);
+    setMessage(`${user.username} 已删除`);
   });
 }
 
@@ -596,15 +668,43 @@ async function addBot(formElement) {
         buyIn: Number(form.get("buyIn"))
       }
     });
-    state.admin = {
-      users: result.users,
-      tables: result.tables,
-      audit: result.audit
-    };
+    applyAdminPayload(result);
     if (state.table && result.table && state.table.id === result.table.id) {
       await refreshTable(true);
     }
     setMessage(`${result.bot.username} 已加入 ${result.table.name}`);
+  });
+}
+
+async function addQuickMessage(formElement) {
+  const form = new FormData(formElement);
+  await runBusy(async () => {
+    const result = await api("/admin/quick-messages", {
+      method: "POST",
+      body: {
+        action: "add",
+        message: form.get("message")
+      }
+    });
+    applyAdminPayload(result);
+    if (state.table) await refreshTable(true);
+    formElement.reset();
+    setMessage("快捷语已添加");
+  });
+}
+
+async function deleteQuickMessage(message) {
+  await runBusy(async () => {
+    const result = await api("/admin/quick-messages", {
+      method: "POST",
+      body: {
+        action: "delete",
+        message
+      }
+    });
+    applyAdminPayload(result);
+    if (state.table) await refreshTable(true);
+    setMessage("快捷语已删除");
   });
 }
 
@@ -705,6 +805,10 @@ function lobbyView() {
           <label>
             <span>座位</span>
             <select name="maxSeats">
+              <option value="10">10 人桌</option>
+              <option value="9">9 人桌</option>
+              <option value="8">8 人桌</option>
+              <option value="7">7 人桌</option>
               <option value="6">6 人桌</option>
               <option value="5">5 人桌</option>
               <option value="4">4 人桌</option>
@@ -788,23 +892,55 @@ function toolbarActionsHtml(table) {
 }
 
 function tauntPanelHtml() {
+  const presets = quickMessages();
   return `
     <div class="taunt-panel ${state.chatOpen ? "open" : ""}" aria-label="聊天框">
-      <button class="chat-toggle" data-action="toggle-chat" aria-expanded="${state.chatOpen ? "true" : "false"}">
-        <span>聊</span>
-        <strong>快捷聊天</strong>
-      </button>
-      <div class="taunt-chatbox" aria-hidden="${state.chatOpen ? "false" : "true"}">
+      <div class="taunt-chatbox">
         <div class="chat-head">
-          <strong>聊天</strong>
-          <button class="ghost slim" data-action="toggle-chat">关闭</button>
+          <strong>聊天记录</strong>
         </div>
-        <div class="chat-presets">
-          ${TAUNT_MESSAGES.map((message) => `<button type="button" data-taunt-message="${escapeAttr(message)}">${escapeHtml(message)}</button>`).join("")}
+        <div class="chat-screen" data-chat-screen>
+          ${chatHistoryHtml(state.table)}
+        </div>
+        <form class="chat-compose" data-form="chat-message">
+          <input data-chat-input name="message" maxlength="${CHAT_MAX_LENGTH}" autocomplete="off" placeholder="输入聊天内容" />
+          <button class="ghost slim chat-shortcut" type="button" data-action="toggle-chat" aria-expanded="${state.chatOpen ? "true" : "false"}">快捷</button>
+          <button class="primary slim" type="submit">发送</button>
+        </form>
+        <div class="chat-presets" aria-hidden="${state.chatOpen ? "false" : "true"}">
+          ${presets.map((message) => `<button type="button" data-taunt-message="${escapeAttr(message)}">${escapeHtml(message)}</button>`).join("")}
         </div>
       </div>
     </div>
   `;
+}
+
+function quickMessages() {
+  const tableMessages = state.table?.quickMessages;
+  if (Array.isArray(tableMessages) && tableMessages.length) return tableMessages;
+  const adminMessages = state.admin?.quickMessages;
+  if (Array.isArray(adminMessages) && adminMessages.length) return adminMessages;
+  return TAUNT_MESSAGES;
+}
+
+function chatHistoryHtml(table) {
+  const messages = table?.chat || [];
+  if (!messages.length) return `<p class="chat-empty">暂无聊天</p>`;
+  return messages.map((item) => {
+    const isMe = state.user && item.userId === state.user.id;
+    return `
+      <p class="chat-line ${isMe ? "me" : ""}">
+        <span><b>${escapeHtml(item.username || "玩家")}</b><time>${chatTime(item.at)}</time></span>
+        <em>${escapeHtml(item.text)}</em>
+      </p>
+    `;
+  }).join("");
+}
+
+function chatTime(value) {
+  const date = new Date(value || "");
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 function rulesPanelHtml() {
@@ -881,11 +1017,23 @@ function seatEntries(table) {
 }
 
 function seatHtml(entry, table) {
+  const style = seatStyle(entry, table);
   return `
-    <div class="${seatClassName(entry, table)}" data-seat="${entry.actualSeat}" data-display-seat="${entry.displaySeat}">
+    <div class="${seatClassName(entry, table)}" data-seat="${entry.actualSeat}" data-display-seat="${entry.displaySeat}"${style ? ` style="${style}"` : ""}>
       ${seatContentHtml(entry, table)}
     </div>
   `;
+}
+
+function seatStyle(entry, table) {
+  if (entry.displaySeat === 0) return "";
+  const seatCount = Math.max(2, Number(table.maxSeats || 6));
+  const opponentSlots = Math.max(1, seatCount - 1);
+  const t = opponentSlots === 1 ? 0.5 : (entry.displaySeat - 1) / (opponentSlots - 1);
+  const arc = Math.sin(t * Math.PI);
+  const x = 8 + t * 84;
+  const y = 34 - arc * 31;
+  return `--seat-left:${x.toFixed(2)}%;--seat-top:${y.toFixed(2)}%`;
 }
 
 function seatClassName(entry, table) {
@@ -929,7 +1077,6 @@ function seatContentHtml(entry, table) {
         <div class="avatar-face">
           <span>${escapeHtml(avatarInitial(player.username))}</span>
         </div>
-        <i>礼</i>
         ${isTurn ? `<em class="seat-timer" data-seat-timer="${actualSeat}"${timerStyle}>${timerText}</em>` : ""}
       </div>
       ${tauntBubbleHtml(player)}
@@ -1113,17 +1260,31 @@ function normalizeRaiseValue(value, min, max, step) {
 }
 
 function adminView() {
-  const options = state.admin.users.map((user) => `<option value="${user.id}">${escapeHtml(user.username)} · ${money(user.chips)}</option>`).join("");
+  const users = state.admin.users || [];
+  const options = users.map((user) => `<option value="${user.id}">${escapeHtml(user.username)} · ${money(user.chips)}</option>`).join("");
   const botTables = (state.admin.tables || []).filter((table) => ["waiting", "showdown"].includes(table.status));
   const tableOptions = botTables.map((table) => `<option value="${table.id}">${escapeHtml(table.name)} · ${table.players}/${table.maxSeats} · ${stageLabel(table.status)}</option>`).join("");
-  const rows = state.admin.users.map((user) => `
+  const rows = users.map((user) => `
     <tr>
-      <td>${escapeHtml(user.username)}</td>
+      <td><strong>${escapeHtml(user.username)}</strong>${user.isBot ? ` <em class="bot-badge">AI</em>` : ""}</td>
       <td>${money(user.chips)}</td>
+      <td class="password-cell">${user.password ? escapeHtml(user.password) : "旧账号未保存"}</td>
       <td>${user.isBot ? "机器人" : (user.isAdmin ? "管理员" : "玩家")}</td>
+      <td class="table-actions">
+        <button class="danger slim" data-delete-user="${user.id}" ${user.id === state.user?.id ? "disabled" : ""}>删除</button>
+      </td>
     </tr>
   `).join("");
-  const audit = state.admin.audit.map((item) => `<p>${escapeHtml(auditText(item))}</p>`).join("");
+  const adminQuickMessages = Array.isArray(state.admin.quickMessages) && state.admin.quickMessages.length
+    ? state.admin.quickMessages
+    : TAUNT_MESSAGES;
+  const quickRows = adminQuickMessages.map((message) => `
+    <span class="quick-message-chip">
+      <b>${escapeHtml(message)}</b>
+      <button type="button" data-delete-quick-message="${escapeAttr(message)}">删除</button>
+    </span>
+  `).join("");
+  const audit = (state.admin.audit || []).map((item) => `<p>${escapeHtml(auditText(item))}</p>`).join("");
 
   return shell(`
     <main class="admin-layout">
@@ -1132,11 +1293,25 @@ function adminView() {
           <h1>管理员后台</h1>
           <button class="ghost" data-action="back-lobby">返回</button>
         </div>
-        <h2>筹码充值</h2>
+        <h2>设置账户余额</h2>
+        <form class="recharge-form" data-form="set-balance">
+          <label>
+            <span>用户</span>
+            <select name="userId" ${options ? "" : "disabled"}>${options || `<option>暂无用户</option>`}</select>
+          </label>
+          <label>
+            <span>余额</span>
+            <input name="balance" type="number" min="0" step="100" value="5000" required />
+          </label>
+          <button class="primary" type="submit" ${options ? "" : "disabled"}>设置余额</button>
+        </form>
+      </section>
+      <section class="admin-card">
+        <h2>增减活动筹码</h2>
         <form class="recharge-form" data-form="recharge">
           <label>
             <span>用户</span>
-            <select name="userId">${options}</select>
+            <select name="userId" ${options ? "" : "disabled"}>${options || `<option>暂无用户</option>`}</select>
           </label>
           <label>
             <span>金额</span>
@@ -1146,7 +1321,21 @@ function adminView() {
             <span>备注</span>
             <input name="note" maxlength="80" placeholder="活动充值" />
           </label>
-          <button class="primary" type="submit">确认</button>
+          <button class="primary" type="submit" ${options ? "" : "disabled"}>确认</button>
+        </form>
+      </section>
+      <section class="admin-card">
+        <h2>密码管理</h2>
+        <form class="recharge-form" data-form="set-password">
+          <label>
+            <span>用户</span>
+            <select name="userId" ${options ? "" : "disabled"}>${options || `<option>暂无用户</option>`}</select>
+          </label>
+          <label>
+            <span>新密码</span>
+            <input name="password" type="text" minlength="6" autocomplete="off" placeholder="至少 6 位" required />
+          </label>
+          <button class="primary" type="submit" ${options ? "" : "disabled"}>修改密码</button>
         </form>
       </section>
       <section class="admin-card">
@@ -1167,10 +1356,18 @@ function adminView() {
           <button class="primary" type="submit" ${tableOptions ? "" : "disabled"}>添加机器人</button>
         </form>
       </section>
-      <section class="admin-card">
-        <h2>用户筹码</h2>
+      <section class="admin-card wide-card">
+        <h2>快捷用语</h2>
+        <form class="quick-message-form" data-form="quick-message-add">
+          <input name="message" maxlength="${CHAT_MAX_LENGTH}" autocomplete="off" placeholder="新增快捷语" required />
+          <button class="primary slim" type="submit">添加</button>
+        </form>
+        <div class="quick-message-list">${quickRows}</div>
+      </section>
+      <section class="admin-card wide-card">
+        <h2>用户账户</h2>
         <table>
-          <thead><tr><th>用户</th><th>钱包</th><th>角色</th></tr></thead>
+          <thead><tr><th>用户</th><th>钱包</th><th>密码</th><th>角色</th><th>操作</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </section>
@@ -1206,6 +1403,7 @@ function render() {
     $app.innerHTML = lobbyView();
   }
   state.renderedTableId = nextTableId;
+  if (!nextTableId) clearTableEffects();
   if (nextTableId) syncRaiseControls($app);
   syncActionCountdown();
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
@@ -1263,7 +1461,16 @@ function syncTauntPanel(root, table) {
     return;
   }
   if (existing) {
-    if (existing.outerHTML !== next) existing.outerHTML = next;
+    existing.classList.toggle("open", state.chatOpen);
+    const shortcut = existing.querySelector(".chat-shortcut");
+    if (shortcut) shortcut.setAttribute("aria-expanded", state.chatOpen ? "true" : "false");
+    const presets = existing.querySelector(".chat-presets");
+    if (presets) {
+      presets.setAttribute("aria-hidden", state.chatOpen ? "false" : "true");
+      setInnerHtml(presets, quickMessages().map((message) => `<button type="button" data-taunt-message="${escapeAttr(message)}">${escapeHtml(message)}</button>`).join(""));
+    }
+    setInnerHtml(existing.querySelector("[data-chat-screen]"), chatHistoryHtml(table));
+    requestAnimationFrame(() => scrollChatScreen(existing));
     return;
   }
   const sidePanel = root.querySelector(".side-panel");
@@ -1274,6 +1481,12 @@ function syncTauntPanel(root, table) {
   } else {
     sidePanel.insertAdjacentHTML("beforeend", next);
   }
+  requestAnimationFrame(() => scrollChatScreen(sidePanel));
+}
+
+function scrollChatScreen(root = document) {
+  const screen = root.querySelector?.("[data-chat-screen]");
+  if (screen) screen.scrollTop = screen.scrollHeight;
 }
 
 function syncRulesDrawer(root = document) {
@@ -1369,6 +1582,11 @@ function patchSeat(root, entry, table) {
   if (!seat) return;
   const nextClass = seatClassName(entry, table);
   if (seat.className !== nextClass) seat.className = nextClass;
+  const nextStyle = seatStyle(entry, table);
+  if ((seat.getAttribute("style") || "") !== nextStyle) {
+    if (nextStyle) seat.setAttribute("style", nextStyle);
+    else seat.removeAttribute("style");
+  }
   if (seat.dataset.displaySeat !== String(entry.displaySeat)) {
     seat.dataset.displaySeat = String(entry.displaySeat);
   }
@@ -1559,6 +1777,10 @@ function removeAfterAnimation(element, duration) {
   window.setTimeout(() => element.remove(), duration);
 }
 
+function clearTableEffects() {
+  document.querySelectorAll(".fx-card-flight, .fx-chip-flight").forEach((element) => element.remove());
+}
+
 function syncShellChrome() {
   const wallet = $app.querySelector(".wallet");
   if (wallet && state.user) {
@@ -1659,7 +1881,11 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "auth") submitAuth(form);
   if (form.dataset.form === "create-table") createTable(form);
   if (form.dataset.form === "recharge") recharge(form);
+  if (form.dataset.form === "set-balance") setBalance(form);
+  if (form.dataset.form === "set-password") setAdminPassword(form);
   if (form.dataset.form === "add-bot") addBot(form);
+  if (form.dataset.form === "quick-message-add") addQuickMessage(form);
+  if (form.dataset.form === "chat-message") submitChatMessage(form);
 });
 
 document.addEventListener("pointerdown", (event) => {
@@ -1714,7 +1940,17 @@ document.addEventListener("click", async (event) => {
   }
 
   if (target.dataset.tauntMessage) {
-    await sendTaunt(target.dataset.tauntMessage);
+    await sendChatMessage(target.dataset.tauntMessage, { closePresets: true });
+    return;
+  }
+
+  if (target.dataset.deleteUser) {
+    await deleteAdminUser(target.dataset.deleteUser);
+    return;
+  }
+
+  if (target.dataset.deleteQuickMessage) {
+    await deleteQuickMessage(target.dataset.deleteQuickMessage);
     return;
   }
 
@@ -1761,6 +1997,7 @@ document.addEventListener("click", async (event) => {
   if (action === "toggle-chat") {
     state.chatOpen = !state.chatOpen;
     render();
+    if (state.chatOpen) requestAnimationFrame(() => scrollChatScreen());
   }
   if (action === "toggle-raise") {
     state.raiseDrawerOpen = !state.raiseDrawerOpen;

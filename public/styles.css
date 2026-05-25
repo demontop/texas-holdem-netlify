@@ -3395,6 +3395,7 @@ th {
 }
 
 .table-shell .avatar-ring i {
+  display: none;
   right: -7px;
   bottom: 4px;
   width: 20px;
@@ -3466,44 +3467,77 @@ th {
 }
 
 .table-shell .seat-0 {
-  width: 172px;
-  height: 118px;
+  left: 50%;
+  bottom: 8.2svh;
+  width: 244px;
+  height: 140px;
+  transform: translateX(-50%);
 }
 
 .table-shell .seat-0 .avatar-ring {
-  width: 62px;
-  height: 62px;
+  width: 66px;
+  height: 66px;
+  margin-left: 14px;
 }
 
 .table-shell .seat-0 .avatar-face {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
 }
 
 .table-shell .seat-0 .avatar-face span {
-  font-size: 24px;
+  font-size: 26px;
 }
 
 .table-shell .seat-0 .hole-cards {
-  left: 104px;
-  top: 21px;
+  left: 86px;
+  top: 14px;
   transform: rotate(4deg);
 }
 
 .table-shell .seat-0 .hole-cards .card.small {
-  width: clamp(48px, 3.8vw, 62px);
+  width: clamp(56px, 4.4vw, 72px);
+}
+
+.table-shell .seat-0 .hole-cards .card.small .card-index b,
+.table-shell .seat-0 .hole-cards .card.small .card-index i {
+  font-size: clamp(12px, 1.15vw, 15px);
+}
+
+.table-shell .seat-0 .hole-cards .card.small .small-center {
+  font-size: clamp(25px, 2.4vw, 34px);
+}
+
+.table-shell .seat-0 .hole-cards .card.small.rank-a .pip.hero {
+  font-size: clamp(28px, 2.8vw, 38px);
 }
 
 .table-shell .seat-0 .player-info {
-  left: 31px;
-  bottom: 7px;
+  left: 47px;
+  top: 75px;
+  bottom: auto;
   width: 94px;
 }
 
+.table-shell .seat-0 .seat-bet {
+  left: 47px;
+  top: 105px;
+  bottom: auto;
+  z-index: 22;
+  min-width: 78px;
+  min-height: 24px;
+  transform: translateX(-50%);
+}
+
+.table-shell .seat-0 .seat-bet .chip-stack {
+  padding: 1px 7px;
+  font-size: 11px;
+}
+
 .table-shell .seat-0 .status-pill {
-  left: 106px;
-  top: 94px;
-  max-width: 104px;
+  left: 148px;
+  top: 113px;
+  max-width: 112px;
 }
 
 .table-shell .stage-showdown .seat.winner .hole-cards .card.small {
@@ -3554,50 +3588,14 @@ th {
   left: 22px;
   bottom: 18px;
   z-index: 12;
-  width: 252px;
+  width: 286px;
   pointer-events: auto;
 }
 
-.chat-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 13px 0 7px;
-  border: 1px solid rgba(255, 229, 150, 0.32);
-  border-radius: 999px;
-  background: rgba(14, 10, 22, 0.74);
-  color: rgba(255, 238, 196, 0.92);
-  font-size: 12px;
-  font-weight: 900;
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.36),
-    0 0 0 1px rgba(255, 255, 255, 0.06) inset;
-}
-
-.chat-toggle span {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #7766ff, #3c2ac9);
-  color: #fff;
-  font-weight: 900;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15) inset;
-}
-
-.chat-toggle strong {
-  font-size: 12px;
-  line-height: 1;
-}
-
 .taunt-chatbox {
-  position: absolute;
-  left: 0;
-  bottom: 50px;
-  display: none;
-  width: 252px;
+  display: grid;
+  gap: 8px;
+  width: 100%;
   padding: 10px;
   border: 1px solid rgba(255, 229, 150, 0.22);
   border-radius: 8px;
@@ -3606,11 +3604,6 @@ th {
   box-shadow:
     0 20px 46px rgba(0, 0, 0, 0.48),
     0 0 0 1px rgba(255, 255, 255, 0.06) inset;
-}
-
-.taunt-panel.open .taunt-chatbox {
-  display: grid;
-  gap: 9px;
 }
 
 .chat-head {
@@ -3625,9 +3618,150 @@ th {
   font-size: 13px;
 }
 
-.chat-presets {
+.chat-screen {
   display: grid;
+  align-content: start;
   gap: 6px;
+  height: 122px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid rgba(255, 229, 150, 0.15);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.24);
+  overscroll-behavior: contain;
+}
+
+.chat-line,
+.chat-empty {
+  margin: 0;
+}
+
+.chat-line {
+  display: grid;
+  gap: 2px;
+}
+
+.chat-line span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(255, 234, 190, 0.72);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.chat-line b {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-line time {
+  color: rgba(255, 234, 190, 0.42);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chat-line em {
+  width: fit-content;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 248, 230, 0.96);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.chat-line.me {
+  justify-items: end;
+}
+
+.chat-line.me span {
+  flex-direction: row-reverse;
+}
+
+.chat-line.me em {
+  background: rgba(83, 95, 255, 0.28);
+  color: #fff;
+}
+
+.chat-empty {
+  color: rgba(255, 239, 205, 0.54);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.chat-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
+}
+
+.chat-compose input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 229, 150, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff6da;
+  font-size: 12px;
+  font-weight: 800;
+  outline: none;
+}
+
+.chat-compose input::placeholder {
+  color: rgba(255, 239, 205, 0.48);
+}
+
+.chat-compose input:focus {
+  border-color: rgba(255, 224, 127, 0.54);
+  box-shadow: 0 0 0 2px rgba(255, 224, 127, 0.12);
+}
+
+.chat-compose button {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.chat-shortcut[aria-expanded="true"] {
+  border-color: rgba(255, 224, 127, 0.5);
+  background: rgba(255, 216, 118, 0.16);
+  color: #ffe9a4;
+}
+
+.chat-presets {
+  position: absolute;
+  left: calc(100% + 10px);
+  bottom: 0;
+  z-index: 20;
+  display: none;
+  gap: 6px;
+  width: 230px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(255, 229, 150, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(24, 17, 52, 0.98), rgba(8, 7, 22, 0.97));
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+}
+
+.taunt-panel.open .chat-presets {
+  display: grid;
 }
 
 .chat-presets button {
@@ -3653,11 +3787,230 @@ th {
   .table-shell .taunt-panel {
     left: 12px;
     bottom: 12px;
-    width: 218px;
+    width: 242px;
   }
 
   .taunt-chatbox {
-    width: 218px;
+    width: 242px;
+  }
+
+  .chat-screen {
+    height: 104px;
+  }
+
+  .chat-presets {
+    left: 0;
+    bottom: calc(100% + 8px);
+    width: 242px;
+    max-height: 180px;
+  }
+}
+
+/* 10-seat live table pass: computed opponent arc, raised board, and admin tools. */
+.table-shell .table-center {
+  inset: 22% 24% 36%;
+}
+
+.table-shell .board {
+  width: min(40vw, 530px);
+}
+
+.table-shell .felt-table .seat:not(.seat-0) {
+  left: var(--seat-left, 50%) !important;
+  top: var(--seat-top, 8%) !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: clamp(96px, 8.4vw, 118px);
+  height: 94px;
+  transform: translate(-50%, -50%) !important;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0),
+.table-shell .felt-table.seats-8 .seat:not(.seat-0),
+.table-shell .felt-table.seats-9 .seat:not(.seat-0),
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) {
+  width: clamp(82px, 7.2vw, 104px);
+  height: 86px;
+}
+
+.table-shell .felt-table.seats-9 .seat:not(.seat-0),
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) {
+  width: clamp(76px, 6.7vw, 94px);
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .avatar-ring,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .avatar-ring,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .avatar-ring,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .avatar-ring {
+  width: 48px;
+  height: 48px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .avatar-face,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .avatar-face,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .avatar-face,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .avatar-face {
+  width: 40px;
+  height: 40px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .avatar-face span,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .avatar-face span,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .avatar-face span,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .avatar-face span {
+  font-size: 18px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .hole-cards,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .hole-cards,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .hole-cards,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .hole-cards {
+  left: 72px;
+  top: 9px;
+}
+
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .hole-cards,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .hole-cards {
+  left: 62px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .hole-cards .card.small,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .hole-cards .card.small,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .hole-cards .card.small,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .hole-cards .card.small {
+  width: 24px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .player-info,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .player-info,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .player-info,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .player-info {
+  bottom: 4px;
+  width: 82px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .player-info strong,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .player-info strong,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .player-info strong,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .player-info strong {
+  font-size: 8px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .player-info .stack-line,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .player-info .stack-line,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .player-info .stack-line,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .player-info .stack-line {
+  font-size: 11px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .status-pill,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .status-pill,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .status-pill,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .status-pill {
+  left: 70px;
+  top: 50px;
+  max-width: 86px;
+  font-size: 9px;
+}
+
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .status-pill,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .status-pill {
+  left: 61px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .seat-bet,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .seat-bet,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .seat-bet,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .seat-bet {
+  bottom: 33px;
+  min-width: 58px;
+}
+
+.table-shell .felt-table.seats-7 .seat:not(.seat-0) .seat-bet .chip-stack,
+.table-shell .felt-table.seats-8 .seat:not(.seat-0) .seat-bet .chip-stack,
+.table-shell .felt-table.seats-9 .seat:not(.seat-0) .seat-bet .chip-stack,
+.table-shell .felt-table.seats-10 .seat:not(.seat-0) .seat-bet .chip-stack {
+  padding: 1px 5px;
+  font-size: 10px;
+}
+
+.admin-layout {
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  width: min(1280px, calc(100vw - 32px));
+}
+
+.admin-card.wide-card,
+.audit-card {
+  grid-column: 1 / -1;
+}
+
+.quick-message-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.quick-message-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quick-message-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid rgba(255, 229, 150, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.quick-message-chip b {
+  color: rgba(255, 244, 222, 0.94);
+  font-size: 13px;
+}
+
+.quick-message-chip button {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: rgba(255, 70, 88, 0.18);
+  color: #ffd0d4;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.password-cell {
+  max-width: 180px;
+  color: #ffe6a8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.table-actions {
+  white-space: nowrap;
+}
+
+@media (max-width: 1040px) {
+  .table-shell .felt-table .seat:not(.seat-0) {
+    width: 82px;
+    height: 80px;
+  }
+
+  .table-shell .felt-table .seat:not(.seat-0) .hole-cards {
+    left: 58px;
+  }
+
+  .table-shell .felt-table .seat:not(.seat-0) .player-info {
+    width: 74px;
+  }
+
+  .admin-layout {
+    grid-template-columns: 1fr;
   }
 }
 
