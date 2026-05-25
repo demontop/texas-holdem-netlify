@@ -612,7 +612,7 @@ async function refreshTable(silent = true) {
   }
 }
 
-function startPolling(delay = 250) {
+function startPolling(delay = 120) {
   if (!state.token || !["table", "lobby"].includes(state.view)) {
     stopPolling();
     return;
@@ -648,12 +648,12 @@ async function runPoll() {
 
 function pollDelay() {
   if (state.view === "table" && state.table) {
-    if (state.table.controls?.canAct) return 500;
-    if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 600;
-    return 1200;
+    if (state.table.controls?.canAct) return 300;
+    if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 350;
+    return 900;
   }
-  if (state.view === "lobby") return 2500;
-  return 5000;
+  if (state.view === "lobby") return 1800;
+  return 3500;
 }
 
 function stopPolling() {
@@ -671,10 +671,10 @@ function syncPollingSubscription() {
     stopPolling();
     return;
   }
-  if (!state.poller && !state.polling) startPolling(state.view === "table" ? 250 : 1000);
+  if (!state.poller && !state.polling) startPolling(state.view === "table" ? 120 : 700);
 }
 
-function nudgePolling(delay = 160) {
+function nudgePolling(delay = 80) {
   if (state.token && ["lobby", "table"].includes(state.view)) startPolling(delay);
 }
 
