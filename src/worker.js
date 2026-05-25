@@ -2188,7 +2188,7 @@ export class PokerGame {
   broadcastDb(db) {
     for (const ws of this.state.getWebSockets()) {
       try {
-        ws.send(JSON.stringify(realtimePayload(db, ws.deserializeAttachment() || {})));
+        ws.close(1012, "HTTP polling enabled");
       } catch {}
     }
   }
@@ -2246,7 +2246,7 @@ export class PokerGame {
 
   async fetch(request) {
     const url = new URL(request.url);
-    if (url.pathname === "/api/ws") return this.handleWebSocket(request);
+    if (url.pathname === "/api/ws") return new Response("HTTP polling enabled", { status: 410 });
     if (url.pathname === "/api/admin/audio-upload/chunk") return this.handleAudioUploadChunk(request);
     if (url.pathname === "/api/admin/audio-upload/complete") return this.handleAudioUploadComplete(request);
     if (url.pathname.startsWith("/api/audio/")) return this.handleAudioAsset(request);

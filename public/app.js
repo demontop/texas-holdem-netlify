@@ -64,10 +64,6 @@ const state = {
 const $app = document.querySelector("#app");
 let bgmAudio = null;
 let bgmAudioSrc = "";
-let realtimeSocket = null;
-let realtimeReconnectTimer = null;
-let realtimeWantedTableId = null;
-let realtimeConnected = false;
 
 function defaultAudioSettings() {
   return {
@@ -389,7 +385,6 @@ function logout() {
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
-  closeRealtime();
   render();
 }
 
@@ -530,6 +525,7 @@ async function startHand() {
     });
     syncServerClock(result.table?.serverTime);
     state.table = result.table;
+    nudgePolling();
   });
 }
 
@@ -547,6 +543,7 @@ async function playerAction(action, amount = null) {
     });
     syncServerClock(result.table?.serverTime);
     state.table = result.table;
+    nudgePolling();
   });
 }
 
@@ -569,6 +566,7 @@ async function sendChatMessage(message, options = {}) {
     syncServerClock(result.table?.serverTime);
     state.table = result.table;
     if (options.closePresets) state.chatOpen = false;
+    nudgePolling();
     render();
     requestAnimationFrame(() => scrollChatScreen());
     return true;
@@ -614,23 +612,21 @@ async function refreshTable(silent = true) {
   }
 }
 
-function startPolling() {
-  if (realtimeConnected) return;
-  stopPolling();
-  schedulePoll(250);
+function startPolling(delay = 250) {
+  if (!state.token || !["table", "lobby"].includes(state.view)) {
+    stopPolling();
+    return;
+  }
+  stopPollTimer();
+  schedulePoll(delay);
 }
 
 function schedulePoll(delay = pollDelay()) {
-  if (realtimeConnected && ["table", "lobby"].includes(state.view)) return;
   stopPollTimer();
   state.poller = window.setTimeout(runPoll, delay);
 }
 
 async function runPoll() {
-  if (realtimeConnected && ["table", "lobby"].includes(state.view)) {
-    stopPollTimer();
-    return;
-  }
   if (state.polling) {
     schedulePoll();
     return;
@@ -652,11 +648,11 @@ async function runPoll() {
 
 function pollDelay() {
   if (state.view === "table" && state.table) {
-    if (state.table.controls?.canAct) return 1200;
-    if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 750;
-    return 1600;
+    if (state.table.controls?.canAct) return 500;
+    if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 600;
+    return 1200;
   }
-  if (state.view === "lobby") return 3000;
+  if (state.view === "lobby") return 2500;
   return 5000;
 }
 
@@ -670,147 +666,16 @@ function stopPollTimer() {
   state.poller = null;
 }
 
-function wantedRealtimeTableId() {
-  return state.view === "table" && state.table?.id ? state.table.id : null;
-}
-
-function syncRealtimeSubscription() {
+function syncPollingSubscription() {
   if (!state.token || !["lobby", "table"].includes(state.view)) {
-    closeRealtime();
+    stopPolling();
     return;
   }
-  connectRealtime(wantedRealtimeTableId());
+  if (!state.poller && !state.polling) startPolling(state.view === "table" ? 250 : 1000);
 }
 
-function connectRealtime(tableId = null) {
-  realtimeWantedTableId = tableId || null;
-  if (!state.token || !window.WebSocket) {
-    startPolling();
-    return;
-  }
-
-  if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
-    sendRealtimeSubscribe();
-    return;
-  }
-  if (realtimeSocket && realtimeSocket.readyState === WebSocket.CONNECTING) return;
-
-  clearRealtimeReconnect();
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(`${protocol}//${window.location.host}/api/ws`);
-  url.searchParams.set("token", state.token);
-  url.searchParams.set("clientId", state.clientId);
-  if (realtimeWantedTableId) url.searchParams.set("tableId", realtimeWantedTableId);
-
-  try {
-    realtimeSocket = new WebSocket(url);
-  } catch {
-    startPolling();
-    scheduleRealtimeReconnect();
-    return;
-  }
-  const socket = realtimeSocket;
-
-  socket.addEventListener("open", () => {
-    if (realtimeSocket !== socket) return;
-    realtimeConnected = true;
-    stopPollTimer();
-    sendRealtimeSubscribe();
-  });
-  socket.addEventListener("message", (event) => {
-    if (realtimeSocket !== socket) return;
-    handleRealtimeMessage(event.data);
-  });
-  socket.addEventListener("close", () => {
-    if (realtimeSocket !== socket) return;
-    realtimeConnected = false;
-    realtimeSocket = null;
-    if (state.token && ["lobby", "table"].includes(state.view)) {
-      startPolling();
-      scheduleRealtimeReconnect();
-    }
-  });
-  socket.addEventListener("error", () => {
-    if (realtimeSocket !== socket) return;
-    try {
-      socket.close();
-    } catch {}
-  });
-}
-
-function sendRealtimeSubscribe() {
-  if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
-  realtimeSocket.send(JSON.stringify({
-    type: "subscribe",
-    tableId: realtimeWantedTableId,
-    clientId: state.clientId
-  }));
-}
-
-function scheduleRealtimeReconnect() {
-  clearRealtimeReconnect();
-  realtimeReconnectTimer = window.setTimeout(() => {
-    realtimeReconnectTimer = null;
-    if (state.token && ["lobby", "table"].includes(state.view)) connectRealtime(wantedRealtimeTableId());
-  }, 1600);
-}
-
-function clearRealtimeReconnect() {
-  if (realtimeReconnectTimer) window.clearTimeout(realtimeReconnectTimer);
-  realtimeReconnectTimer = null;
-}
-
-function closeRealtime() {
-  clearRealtimeReconnect();
-  realtimeConnected = false;
-  realtimeWantedTableId = null;
-  if (realtimeSocket) {
-    const socket = realtimeSocket;
-    realtimeSocket = null;
-    try {
-      socket.close();
-    } catch {}
-  }
-}
-
-async function handleRealtimeMessage(raw) {
-  let payload = null;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    return;
-  }
-
-  if (payload.serverTime) syncServerClock(payload.serverTime);
-  if (payload.type === "error") {
-    if (payload.error) setMessage(payload.error);
-    return;
-  }
-  if (payload.type === "lobby") {
-    if (payload.user) state.user = payload.user;
-    if (Array.isArray(payload.tables)) state.tables = payload.tables;
-    if (!state.table && state.view !== "admin") state.view = "lobby";
-    if (state.view === "lobby") requestRealtimeRender();
-    return;
-  }
-  if (payload.type === "table") {
-    const payloadTableId = payload.tableId || payload.table?.id || null;
-    const currentTableId = state.table?.id || null;
-    const wantedTableId = wantedRealtimeTableId();
-    const isCurrentTable = Boolean(payloadTableId && (payloadTableId === currentTableId || payloadTableId === wantedTableId));
-    if (!isCurrentTable) return;
-    if (payload.user) state.user = payload.user;
-    if (payload.table) {
-      state.table = payload.table;
-      if (state.view !== "admin") state.view = "table";
-    } else if (state.table?.id === payload.tableId) {
-      state.table = null;
-      state.view = "lobby";
-      await loadLobby(true);
-      setMessage("牌桌已解散");
-    }
-    requestRealtimeRender();
-  }
+function nudgePolling(delay = 160) {
+  if (state.token && ["lobby", "table"].includes(state.view)) startPolling(delay);
 }
 
 async function loadAdmin() {
@@ -1865,7 +1730,7 @@ function render() {
   scheduleTableAnimations(previousAnimationTable, state.view === "table" ? state.table : null);
   syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : null);
   state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
-  syncRealtimeSubscription();
+  syncPollingSubscription();
 }
 
 function patchLobbyView() {
