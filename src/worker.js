@@ -16,6 +16,11 @@ const TAUNT_MESSAGES = [
 const CHAT_MAX_LENGTH = 40;
 const CHAT_HISTORY_LIMIT = 30;
 const QUICK_MESSAGE_LIMIT = 16;
+const TABLE_SEAT_OPTIONS = [3, 5, 7, 9];
+const DEFAULT_MAX_SEATS = 9;
+const AUDIO_SOURCE_MAX_LENGTH = 420000;
+const AUDIO_EVENT_LIMIT = 80;
+const AUDIO_ACTIONS = ["start", "deal", "fold", "check", "call", "bet", "raise", "allin", "blind", "timeout", "showdown"];
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
@@ -39,6 +44,14 @@ function defaultDb() {
   };
 }
 
+function defaultAudioSettings() {
+  return {
+    bgm: { src: "", name: "", volume: 0.36, enabled: false },
+    actions: {},
+    quickMessages: {}
+  };
+}
+
 function normalizeDb(db) {
   db.version = db.version || 1;
   db.revision = Number(db.revision || 0);
@@ -47,6 +60,7 @@ function normalizeDb(db) {
   db.tables = db.tables || {};
   db.audit = db.audit || [];
   db.quickMessages = normalizeQuickMessages(db.quickMessages);
+  db.audioSettings = normalizeAudioSettings(db.audioSettings);
 
   const now = Date.now();
   for (const [token, session] of Object.entries(db.sessions)) {
@@ -58,12 +72,15 @@ function normalizeDb(db) {
   }
 
   for (const table of Object.values(db.tables)) {
-    table.maxSeats = table.maxSeats || 6;
+    table.maxSeats = normalizePersistedMaxSeats(table);
     table.seats = table.seats || Array.from({ length: table.maxSeats }, () => null);
     while (table.seats.length < table.maxSeats) table.seats.push(null);
     table.logs = table.logs || [];
     table.chat = table.chat || [];
     table.quickMessages = normalizeQuickMessages(table.quickMessages || db.quickMessages);
+    table.audioSettings = normalizeAudioSettings(table.audioSettings || db.audioSettings);
+    table.audioEvents = Array.isArray(table.audioEvents) ? table.audioEvents.slice(-AUDIO_EVENT_LIMIT) : [];
+    table.audioSeq = Number(table.audioSeq || 0);
     table.winners = table.winners || [];
     table.revision = Number(table.revision || 0);
     table.actionReceipts = table.actionReceipts || {};
@@ -129,6 +146,70 @@ function randomInt(min, max = null) {
   return lower + (values[0] % range);
 }
 
+function normalizeMaxSeats(value) {
+  const requested = clampInt(value || DEFAULT_MAX_SEATS, TABLE_SEAT_OPTIONS[0], TABLE_SEAT_OPTIONS[TABLE_SEAT_OPTIONS.length - 1]);
+  return TABLE_SEAT_OPTIONS.find((option) => option >= requested) || TABLE_SEAT_OPTIONS[TABLE_SEAT_OPTIONS.length - 1];
+}
+
+function normalizePersistedMaxSeats(table) {
+  const current = clampInt(table?.maxSeats || DEFAULT_MAX_SEATS, 2, 10);
+  const normalized = normalizeMaxSeats(current);
+  if (normalized >= current) return normalized;
+  const seats = Array.isArray(table?.seats) ? table.seats : [];
+  return seats.slice(normalized).some(Boolean) ? current : normalized;
+}
+
+function normalizeAudioSettings(settings = {}) {
+  const defaults = defaultAudioSettings();
+  const source = settings && typeof settings === "object" ? settings : {};
+  const actions = {};
+  for (const [key, asset] of Object.entries(source.actions || {})) {
+    if (!AUDIO_ACTIONS.includes(key)) continue;
+    const normalized = normalizeAudioAsset(asset);
+    if (normalized.src) actions[key] = normalized;
+  }
+  const quickMessages = {};
+  for (const [message, asset] of Object.entries(source.quickMessages || {})) {
+    const text = normalizeQuickMessage(message, { allowEmpty: true });
+    if (!text) continue;
+    const normalized = normalizeAudioAsset(asset);
+    if (normalized.src) quickMessages[text] = normalized;
+  }
+  return {
+    bgm: normalizeAudioAsset(source.bgm || defaults.bgm, { defaultVolume: defaults.bgm.volume, allowDisabled: true }),
+    actions,
+    quickMessages
+  };
+}
+
+function normalizeAudioAsset(asset = {}, options = {}) {
+  const source = asset && typeof asset === "object" ? asset : {};
+  const src = normalizeAudioSource(source.src || source.url || "");
+  const name = String(source.name || "").replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 80);
+  const volume = clampNumber(source.volume ?? options.defaultVolume ?? 0.8, 0, 1);
+  const enabled = options.allowDisabled ? Boolean(source.enabled && src) : Boolean(src);
+  return {
+    src,
+    name,
+    volume,
+    enabled
+  };
+}
+
+function normalizeAudioSource(value) {
+  const src = String(value || "").trim();
+  if (!src) return "";
+  if (src.length > AUDIO_SOURCE_MAX_LENGTH) throw new HttpError(400, "单个音频文件太大，请使用更短的音频或外链");
+  if (/^https?:\/\//i.test(src) || /^\/[^\s]*$/i.test(src) || /^data:audio\/[a-z0-9.+-]+;base64,/i.test(src)) return src;
+  throw new HttpError(400, "音频必须是 http(s) 地址、站内 /audio 路径，或上传的音频文件");
+}
+
+function clampNumber(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -149,8 +230,10 @@ function assertPassword(password) {
   }
 }
 
-function normalizeQuickMessage(message) {
-  const text = normalizeChatMessage(message);
+function normalizeQuickMessage(message, options = {}) {
+  const raw = String(message || "").replace(/\s+/g, " ").trim();
+  if (!raw && options.allowEmpty) return "";
+  const text = normalizeChatMessage(raw);
   if ([...text].length > CHAT_MAX_LENGTH) throw new HttpError(400, `快捷语不能超过 ${CHAT_MAX_LENGTH} 个字`);
   return text;
 }
@@ -252,14 +335,18 @@ function getToken(event) {
   return match ? match[1] : null;
 }
 
-function requireUser(db, event, options = {}) {
-  const token = getToken(event);
+function userFromToken(db, token) {
   const session = token ? db.sessions[token] : null;
-  if (!session || session.expiresAt < Date.now()) {
-    throw new HttpError(401, "请先登录");
-  }
+  if (!session || session.expiresAt < Date.now()) throw new HttpError(401, "请先登录");
   const user = db.users[session.userId];
   if (!user) throw new HttpError(401, "登录状态已失效");
+  return user;
+}
+
+function requireUser(db, event, options = {}) {
+  const token = getToken(event);
+  const user = userFromToken(db, token);
+  const session = db.sessions[token];
   if (options.refreshSession !== false) {
     session.expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 14;
   }
@@ -337,6 +424,24 @@ function addChatMessage(table, player, text, at) {
   table.chat = table.chat.slice(-CHAT_HISTORY_LIMIT);
 }
 
+function addAudioEvent(table, type, player = null, extras = {}) {
+  table.audioEvents = Array.isArray(table.audioEvents) ? table.audioEvents : [];
+  table.audioSeq = Number(table.audioSeq || 0) + 1;
+  const event = {
+    id: `${table.handNo || 0}-${table.audioSeq}`,
+    seq: table.audioSeq,
+    type,
+    at: nowIso(),
+    handNo: table.handNo || 0,
+    userId: player?.userId || null,
+    username: player?.username || "",
+    seat: player?.seat ?? null,
+    ...extras
+  };
+  table.audioEvents.push(event);
+  table.audioEvents = table.audioEvents.slice(-AUDIO_EVENT_LIMIT);
+}
+
 function commandKey(user, body, scope) {
   const raw = String(body.commandId || body.actionId || "").trim();
   if (!raw || raw.length > 120) return "";
@@ -392,6 +497,7 @@ function postBlind(table, seat, amount, label) {
   const paid = takeChips(table, player, amount);
   player.lastAction = `${label} ${paid}`;
   table.currentBet = Math.max(table.currentBet, player.bet);
+  addAudioEvent(table, "blind", player, { amount: paid, label });
 }
 
 function startHand(table) {
@@ -445,6 +551,7 @@ function startHand(table) {
   table.currentTurnSeat = nextSeat(table, bigBlindSeat, (player) => player.inHand && !player.folded && !player.allIn);
   setTurnDeadline(table);
   addLog(table, `第 ${table.handNo} 手牌开始，${table.seats[smallBlindSeat].username} 小盲，${table.seats[bigBlindSeat].username} 大盲`);
+  addAudioEvent(table, "start", null, { stage: table.status });
 
   if (table.currentTurnSeat == null) runOutToShowdown(table);
 }
@@ -523,6 +630,7 @@ function dealNextCommunity(table) {
     table.community.push(table.deck.pop());
     table.status = "river";
   }
+  addAudioEvent(table, "deal", null, { stage: table.status, communityCount: table.community.length });
 }
 
 function runOutToShowdown(table) {
@@ -546,6 +654,7 @@ function awardByFold(table, winner) {
     player.acted = false;
   }
   addLog(table, `${winner.username} 赢得 ${amount} 筹码`);
+  addAudioEvent(table, "showdown", winner, { amount, byFold: true });
 }
 
 function resolveShowdown(table) {
@@ -606,6 +715,7 @@ function resolveShowdown(table) {
 
   const winnerText = table.winners.map((winner) => `${winner.username} +${winner.amount}（${winner.hand}）`).join("，");
   addLog(table, `摊牌：${winnerText}`);
+  addAudioEvent(table, "showdown", null, { winners: table.winners });
 }
 
 function stageName(status) {
@@ -734,6 +844,15 @@ function tableSummary(table) {
   };
 }
 
+function lobbyPayload(db, user) {
+  return {
+    type: "lobby",
+    user: userPublic(user),
+    tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
+    serverTime: nowIso()
+  };
+}
+
 function publicTable(table, viewer) {
   const viewerSeat = table.seats.find((player) => player && viewer && player.userId === viewer.id);
   const canAct = Boolean(viewerSeat && ACTIVE_STAGES.has(table.status) && table.currentTurnSeat === viewerSeat.seat);
@@ -772,6 +891,8 @@ function publicTable(table, viewer) {
     logs: table.logs || [],
     chat: table.chat || [],
     quickMessages: table.quickMessages || TAUNT_MESSAGES,
+    audioSettings: normalizeAudioSettings(table.audioSettings),
+    audioEvents: Array.isArray(table.audioEvents) ? table.audioEvents.slice(-AUDIO_EVENT_LIMIT) : [],
     youSeat: viewerSeat ? viewerSeat.seat : null,
     isOwner: Boolean(viewer && table.ownerId === viewer.id),
     controls: {
@@ -807,6 +928,22 @@ function publicTable(table, viewer) {
       };
     })
   };
+}
+
+function realtimePayload(db, attachment = {}) {
+  const user = db.users[attachment.userId];
+  if (!user) return { type: "error", error: "登录状态已失效", serverTime: nowIso() };
+  if (attachment.tableId) {
+    const table = db.tables[attachment.tableId];
+    return {
+      type: "table",
+      user: userPublic(user),
+      table: table && seatedPlayers(table).length > 0 ? publicTable(table, user) : null,
+      tableId: attachment.tableId,
+      serverTime: nowIso()
+    };
+  }
+  return lobbyPayload(db, user);
 }
 
 function getTableOrThrow(db, id) {
@@ -910,7 +1047,7 @@ function randomBotName() {
 function createTable(owner, body) {
   const smallBlind = clampInt(body.smallBlind || 10, 1, 10000);
   const bigBlind = clampInt(body.bigBlind || smallBlind * 2, smallBlind + 1, 20000);
-  const maxSeats = clampInt(body.maxSeats || 6, 2, 10);
+  const maxSeats = normalizeMaxSeats(body.maxSeats);
   const name = String(body.name || `${owner.username} 的牌桌`).trim().slice(0, 28);
   const table = {
     id: randomId(8),
@@ -936,6 +1073,9 @@ function createTable(owner, body) {
     logs: [],
     chat: [],
     quickMessages: [...TAUNT_MESSAGES],
+    audioSettings: defaultAudioSettings(),
+    audioEvents: [],
+    audioSeq: 0,
     createdAt: nowIso(),
     updatedAt: nowIso()
   };
@@ -1068,6 +1208,7 @@ function adminPayload(db) {
     users: Object.values(db.users).map(adminUserPublic).sort((a, b) => a.username.localeCompare(b.username)),
     tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
     quickMessages: normalizeQuickMessages(db.quickMessages),
+    audioSettings: normalizeAudioSettings(db.audioSettings),
     audit: db.audit.slice(0, 80)
   };
 }
@@ -1076,6 +1217,15 @@ function setAllTableQuickMessages(db) {
   const messages = normalizeQuickMessages(db.quickMessages);
   for (const table of Object.values(db.tables)) {
     table.quickMessages = messages;
+    touchTable(table);
+  }
+}
+
+function setAllTableAudioSettings(db) {
+  const settings = normalizeAudioSettings(db.audioSettings);
+  db.audioSettings = settings;
+  for (const table of Object.values(db.tables)) {
+    table.audioSettings = settings;
     touchTable(table);
   }
 }
@@ -1159,6 +1309,7 @@ function applyActionTimeouts(table, at = Date.now()) {
     player.acted = true;
     player.lastAction = "超时弃牌";
     addLog(table, `${player.username} 20 秒未行动，自动弃牌`);
+    addAudioEvent(table, "timeout", player);
     maybeAdvance(table, player.seat);
     changed = true;
   }
@@ -1189,21 +1340,25 @@ function handleAction(table, user, body) {
     player.acted = true;
     player.lastAction = "弃牌";
     addLog(table, `${player.username} 弃牌`);
+    addAudioEvent(table, "fold", player);
   } else if (action === "check") {
     if (toCall > 0) throw new HttpError(400, "当前需要跟注，不能看牌");
     player.acted = true;
     player.lastAction = "看牌";
     addLog(table, `${player.username} 看牌`);
+    addAudioEvent(table, "check", player);
   } else if (action === "call") {
     if (toCall <= 0) {
       player.acted = true;
       player.lastAction = "看牌";
       addLog(table, `${player.username} 看牌`);
+      addAudioEvent(table, "check", player);
     } else {
       const paid = takeChips(table, player, toCall);
       player.acted = true;
       player.lastAction = paid < toCall ? "全下跟注" : `跟注 ${paid}`;
       addLog(table, `${player.username} ${player.lastAction}`);
+      addAudioEvent(table, player.allIn ? "allin" : "call", player, { amount: paid });
     }
   } else if (action === "raise") {
     const target = clampInt(body.amount, 1, player.bet + player.stack);
@@ -1228,6 +1383,7 @@ function handleAction(table, user, body) {
       }
     }
     addLog(table, `${player.username} ${player.lastAction}`);
+    addAudioEvent(table, player.allIn ? "allin" : (previousBet === 0 ? "bet" : "raise"), player, { amount: paid, total: player.bet });
     if (paid <= 0) throw new HttpError(400, "筹码不足");
   } else if (action === "allin") {
     const previousBet = table.currentBet;
@@ -1245,6 +1401,7 @@ function handleAction(table, user, body) {
       }
     }
     addLog(table, `${player.username} ${player.lastAction}`);
+    addAudioEvent(table, "allin", player, { total: player.bet });
   } else {
     throw new HttpError(400, "未知动作");
   }
@@ -1259,6 +1416,7 @@ function handleTaunt(table, user, body) {
   player.taunt = { text, at, handNo: table.handNo || 0 };
   addChatMessage(table, player, text, at);
   addLog(table, `${player.username}：${text}`);
+  addAudioEvent(table, "quickMessage", player, { message: text });
 }
 
 function normalizeChatMessage(message) {
@@ -1489,6 +1647,7 @@ async function handleApiRequest(request, store, env = {}) {
           if (action === "delete") {
             db.quickMessages = messages.filter((message) => message !== text);
             if (!db.quickMessages.length) db.quickMessages = [...TAUNT_MESSAGES];
+            if (db.audioSettings?.quickMessages) delete db.audioSettings.quickMessages[text];
           } else {
             if (!messages.includes(text)) messages.push(text);
             if (messages.length > QUICK_MESSAGE_LIMIT) throw new HttpError(400, `快捷语最多 ${QUICK_MESSAGE_LIMIT} 条`);
@@ -1496,12 +1655,31 @@ async function handleApiRequest(request, store, env = {}) {
           }
           db.quickMessages = normalizeQuickMessages(db.quickMessages);
           setAllTableQuickMessages(db);
+          setAllTableAudioSettings(db);
           db.audit.unshift({
             at: nowIso(),
             actorId: admin.id,
             actor: admin.username,
             type: action === "delete" ? "delete_quick_message" : "add_quick_message",
             target: text
+          });
+          db.audit = db.audit.slice(0, 300);
+          return adminPayload(db);
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] === "audio-settings") {
+        const result = await withDb((db) => {
+          const admin = requireAdmin(db, event);
+          db.audioSettings = normalizeAudioSettings(body.audioSettings || {});
+          setAllTableAudioSettings(db);
+          db.audit.unshift({
+            at: nowIso(),
+            actorId: admin.id,
+            actor: admin.username,
+            type: "update_audio_settings",
+            note: "管理员更新牌桌音频"
           });
           db.audit = db.audit.slice(0, 300);
           return adminPayload(db);
@@ -1549,6 +1727,7 @@ async function handleApiRequest(request, store, env = {}) {
           const user = requireUser(db, event);
           const table = createTable(user, body);
           table.quickMessages = normalizeQuickMessages(db.quickMessages);
+          table.audioSettings = normalizeAudioSettings(db.audioSettings);
           db.tables[table.id] = table;
           sitUserAtTable(db, table, user, body.buyIn || table.bigBlind * 50, body.seat == null ? null : Number(body.seat));
           return { user: userPublic(user), table: publicTable(table, user) };
@@ -1732,6 +1911,8 @@ export class PokerGame {
       const result = await mutator(db);
       db.revision = Number(db.revision || 0) + 1;
       await this.writeDb(db);
+      await this.scheduleNextAlarm(db);
+      this.broadcastDb(db);
       return result;
     };
     const next = this.queue.then(run, run);
@@ -1739,7 +1920,129 @@ export class PokerGame {
     return next;
   }
 
+  async handleWebSocket(request) {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected WebSocket upgrade", { status: 426 });
+    }
+
+    const url = new URL(request.url);
+    const db = await this.readDb();
+    let user = null;
+    try {
+      user = userFromToken(db, url.searchParams.get("token"));
+    } catch (error) {
+      return new Response(error.message || "Unauthorized", { status: error.statusCode || 401 });
+    }
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair);
+    const attachment = {
+      userId: user.id,
+      clientId: String(url.searchParams.get("clientId") || "").slice(0, 120),
+      tableId: String(url.searchParams.get("tableId") || "").slice(0, 80) || null,
+      connectedAt: nowIso()
+    };
+    server.serializeAttachment(attachment);
+    this.state.acceptWebSocket(server);
+    server.send(JSON.stringify(realtimePayload(db, attachment)));
+    await this.scheduleNextAlarm(db);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws, message) {
+    let payload = {};
+    try {
+      payload = JSON.parse(String(message || "{}"));
+    } catch {
+      ws.send(JSON.stringify({ type: "error", error: "消息格式错误", serverTime: nowIso() }));
+      return;
+    }
+
+    const attachment = ws.deserializeAttachment() || {};
+    if (payload.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong", serverTime: nowIso() }));
+      return;
+    }
+    if (payload.type === "subscribe") {
+      attachment.tableId = payload.tableId ? String(payload.tableId).slice(0, 80) : null;
+      attachment.clientId = payload.clientId ? String(payload.clientId).slice(0, 120) : attachment.clientId;
+      attachment.subscribedAt = nowIso();
+      ws.serializeAttachment(attachment);
+    }
+
+    const db = await this.readDb();
+    ws.send(JSON.stringify(realtimePayload(db, attachment)));
+  }
+
+  webSocketClose() {}
+
+  webSocketError(ws) {
+    try {
+      ws.close(1011, "WebSocket error");
+    } catch {}
+  }
+
+  broadcastDb(db) {
+    for (const ws of this.state.getWebSockets()) {
+      try {
+        ws.send(JSON.stringify(realtimePayload(db, ws.deserializeAttachment() || {})));
+      } catch {}
+    }
+  }
+
+  async scheduleNextAlarm(db) {
+    const nextAt = this.nextWakeAt(db);
+    if (nextAt) {
+      await this.state.storage.setAlarm(nextAt);
+    } else {
+      await this.state.storage.deleteAlarm();
+    }
+  }
+
+  nextWakeAt(db) {
+    const now = Date.now();
+    const times = [];
+    for (const table of Object.values(db.tables || {})) {
+      if (!ACTIVE_STAGES.has(table.status)) continue;
+      const current = table.seats?.[table.currentTurnSeat];
+      if (current?.isBot) times.push(now + 250);
+      if (table.actionDeadlineAt) {
+        const deadline = new Date(table.actionDeadlineAt).getTime();
+        if (Number.isFinite(deadline)) times.push(Math.max(now + 250, deadline));
+      }
+    }
+    return times.length ? Math.min(...times) : null;
+  }
+
+  async alarm() {
+    const run = async () => {
+      const db = await this.readDb();
+      let changed = false;
+      for (const table of Object.values(db.tables || {})) {
+        if (seatedPlayers(table).length === 0) {
+          delete db.tables[table.id];
+          changed = true;
+          continue;
+        }
+        if (runAutomaticTableActions(table)) {
+          touchTable(table);
+          changed = true;
+        }
+      }
+      if (changed) {
+        db.revision = Number(db.revision || 0) + 1;
+        await this.writeDb(db);
+        this.broadcastDb(db);
+      }
+      await this.scheduleNextAlarm(db);
+    };
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
   async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/ws") return this.handleWebSocket(request);
     return responseFromResult(await handleApiRequest(request, this, this.env));
   }
 }

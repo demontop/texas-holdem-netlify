@@ -1,6 +1,8 @@
 const API_BASE = "/api";
 const STORAGE_KEY = "holdem_token";
 const CLIENT_KEY = "holdem_client_id";
+const BGM_ENABLED_KEY = "holdem_bgm_enabled";
+const AUDIO_UPLOAD_MAX_BYTES = 280 * 1024;
 const TAUNT_MESSAGES = [
   "跟得起吗？",
   "这把我收了",
@@ -12,6 +14,19 @@ const TAUNT_MESSAGES = [
   "老公你说句话呀！"
 ];
 const CHAT_MAX_LENGTH = 40;
+const AUDIO_ACTIONS = [
+  { key: "start", label: "开局/发牌" },
+  { key: "deal", label: "公共牌" },
+  { key: "blind", label: "盲注" },
+  { key: "fold", label: "弃牌" },
+  { key: "check", label: "看牌" },
+  { key: "call", label: "跟注" },
+  { key: "bet", label: "下注" },
+  { key: "raise", label: "加注" },
+  { key: "allin", label: "全下" },
+  { key: "timeout", label: "超时弃牌" },
+  { key: "showdown", label: "结算" }
+];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -36,10 +51,26 @@ const state = {
   serverClockOffset: 0,
   countdownTimer: null,
   timeoutPollDeadline: "",
-  admin: { users: [], tables: [], quickMessages: [], audit: [] }
+  bgmEnabled: localStorage.getItem(BGM_ENABLED_KEY) !== "0",
+  audioLastSeqByTable: {},
+  admin: { users: [], tables: [], quickMessages: [], audioSettings: defaultAudioSettings(), audit: [] }
 };
 
 const $app = document.querySelector("#app");
+let bgmAudio = null;
+let bgmAudioSrc = "";
+let realtimeSocket = null;
+let realtimeReconnectTimer = null;
+let realtimeWantedTableId = null;
+let realtimeConnected = false;
+
+function defaultAudioSettings() {
+  return {
+    bgm: { src: "", name: "", volume: 0.36, enabled: false },
+    actions: {},
+    quickMessages: {}
+  };
+}
 
 function getClientId() {
   let id = localStorage.getItem(CLIENT_KEY);
@@ -303,6 +334,7 @@ function logout() {
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
+  closeRealtime();
   render();
 }
 
@@ -528,16 +560,22 @@ async function refreshTable(silent = true) {
 }
 
 function startPolling() {
+  if (realtimeConnected) return;
   stopPolling();
   schedulePoll(250);
 }
 
 function schedulePoll(delay = pollDelay()) {
+  if (realtimeConnected && ["table", "lobby"].includes(state.view)) return;
   stopPollTimer();
   state.poller = window.setTimeout(runPoll, delay);
 }
 
 async function runPoll() {
+  if (realtimeConnected && ["table", "lobby"].includes(state.view)) {
+    stopPollTimer();
+    return;
+  }
   if (state.polling) {
     schedulePoll();
     return;
@@ -577,6 +615,144 @@ function stopPollTimer() {
   state.poller = null;
 }
 
+function wantedRealtimeTableId() {
+  return state.view === "table" && state.table?.id ? state.table.id : null;
+}
+
+function syncRealtimeSubscription() {
+  if (!state.token || !["lobby", "table"].includes(state.view)) {
+    closeRealtime();
+    return;
+  }
+  connectRealtime(wantedRealtimeTableId());
+}
+
+function connectRealtime(tableId = null) {
+  realtimeWantedTableId = tableId || null;
+  if (!state.token || !window.WebSocket) {
+    startPolling();
+    return;
+  }
+
+  if (realtimeSocket && realtimeSocket.readyState === WebSocket.OPEN) {
+    sendRealtimeSubscribe();
+    return;
+  }
+  if (realtimeSocket && realtimeSocket.readyState === WebSocket.CONNECTING) return;
+
+  clearRealtimeReconnect();
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = new URL(`${protocol}//${window.location.host}/api/ws`);
+  url.searchParams.set("token", state.token);
+  url.searchParams.set("clientId", state.clientId);
+  if (realtimeWantedTableId) url.searchParams.set("tableId", realtimeWantedTableId);
+
+  try {
+    realtimeSocket = new WebSocket(url);
+  } catch {
+    startPolling();
+    scheduleRealtimeReconnect();
+    return;
+  }
+  const socket = realtimeSocket;
+
+  socket.addEventListener("open", () => {
+    if (realtimeSocket !== socket) return;
+    realtimeConnected = true;
+    stopPollTimer();
+    sendRealtimeSubscribe();
+  });
+  socket.addEventListener("message", (event) => {
+    if (realtimeSocket !== socket) return;
+    handleRealtimeMessage(event.data);
+  });
+  socket.addEventListener("close", () => {
+    if (realtimeSocket !== socket) return;
+    realtimeConnected = false;
+    realtimeSocket = null;
+    if (state.token && ["lobby", "table"].includes(state.view)) {
+      startPolling();
+      scheduleRealtimeReconnect();
+    }
+  });
+  socket.addEventListener("error", () => {
+    if (realtimeSocket !== socket) return;
+    try {
+      socket.close();
+    } catch {}
+  });
+}
+
+function sendRealtimeSubscribe() {
+  if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
+  realtimeSocket.send(JSON.stringify({
+    type: "subscribe",
+    tableId: realtimeWantedTableId,
+    clientId: state.clientId
+  }));
+}
+
+function scheduleRealtimeReconnect() {
+  clearRealtimeReconnect();
+  realtimeReconnectTimer = window.setTimeout(() => {
+    realtimeReconnectTimer = null;
+    if (state.token && ["lobby", "table"].includes(state.view)) connectRealtime(wantedRealtimeTableId());
+  }, 1600);
+}
+
+function clearRealtimeReconnect() {
+  if (realtimeReconnectTimer) window.clearTimeout(realtimeReconnectTimer);
+  realtimeReconnectTimer = null;
+}
+
+function closeRealtime() {
+  clearRealtimeReconnect();
+  realtimeConnected = false;
+  realtimeWantedTableId = null;
+  if (realtimeSocket) {
+    const socket = realtimeSocket;
+    realtimeSocket = null;
+    try {
+      socket.close();
+    } catch {}
+  }
+}
+
+async function handleRealtimeMessage(raw) {
+  let payload = null;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return;
+  }
+
+  if (payload.serverTime) syncServerClock(payload.serverTime);
+  if (payload.type === "error") {
+    if (payload.error) setMessage(payload.error);
+    return;
+  }
+  if (payload.type === "lobby") {
+    if (payload.user) state.user = payload.user;
+    if (Array.isArray(payload.tables)) state.tables = payload.tables;
+    if (!state.table && state.view !== "admin") state.view = "lobby";
+    if (!state.busy && state.view === "lobby") render();
+    return;
+  }
+  if (payload.type === "table") {
+    if (payload.user) state.user = payload.user;
+    if (payload.table) {
+      state.table = payload.table;
+      if (state.view !== "admin") state.view = "table";
+    } else if (state.table?.id === payload.tableId) {
+      state.table = null;
+      state.view = "lobby";
+      await loadLobby(true);
+      setMessage("牌桌已解散");
+    }
+    if (!state.busy) render();
+  }
+}
+
 async function loadAdmin() {
   await runBusy(async () => {
     const result = await api("/admin/users");
@@ -590,7 +766,18 @@ function applyAdminPayload(payload) {
     users: payload?.users || [],
     tables: payload?.tables || [],
     quickMessages: payload?.quickMessages || TAUNT_MESSAGES,
+    audioSettings: normalizeClientAudioSettings(payload?.audioSettings),
     audit: payload?.audit || []
+  };
+}
+
+function normalizeClientAudioSettings(settings = {}) {
+  const defaults = defaultAudioSettings();
+  const source = settings && typeof settings === "object" ? settings : {};
+  return {
+    bgm: { ...defaults.bgm, ...(source.bgm || {}) },
+    actions: source.actions && typeof source.actions === "object" ? source.actions : {},
+    quickMessages: source.quickMessages && typeof source.quickMessages === "object" ? source.quickMessages : {}
   };
 }
 
@@ -708,6 +895,82 @@ async function deleteQuickMessage(message) {
   });
 }
 
+async function saveAudioSettings(formElement) {
+  await runBusy(async () => {
+    const audioSettings = await collectAudioSettings(formElement);
+    const result = await api("/admin/audio-settings", {
+      method: "POST",
+      body: { audioSettings }
+    });
+    applyAdminPayload(result);
+    if (state.table) await refreshTable(true);
+    setMessage("音频设置已保存");
+  });
+}
+
+async function collectAudioSettings(formElement) {
+  const settings = defaultAudioSettings();
+  for (const row of formElement.querySelectorAll("[data-audio-row]")) {
+    const kind = row.dataset.audioKind;
+    const key = row.dataset.audioKey || "";
+    const asset = await collectAudioAsset(row);
+    if (kind === "bgm") {
+      settings.bgm = { ...asset, enabled: Boolean(asset.src && row.querySelector("[data-audio-enabled]")?.checked) };
+    } else if (kind === "action") {
+      if (asset.src) settings.actions[key] = asset;
+    } else if (kind === "quick") {
+      if (asset.src) settings.quickMessages[key] = asset;
+    }
+  }
+  return settings;
+}
+
+async function collectAudioAsset(row) {
+  const clear = Boolean(row.querySelector("[data-audio-clear]")?.checked);
+  const file = row.querySelector("[data-audio-file]")?.files?.[0] || null;
+  const srcInput = row.querySelector("[data-audio-src]");
+  const nameInput = row.querySelector("[data-audio-name]");
+  const currentSrc = row.querySelector("[data-audio-current-src]")?.value || "";
+  const currentName = row.querySelector("[data-audio-current-name]")?.value || "";
+  let src = "";
+  let name = "";
+
+  if (!clear && file) {
+    if (file.size > AUDIO_UPLOAD_MAX_BYTES) throw new Error(`音频文件不能超过 ${Math.round(AUDIO_UPLOAD_MAX_BYTES / 1024)}KB`);
+    src = await fileToDataUrl(file);
+    name = file.name;
+  } else if (!clear && srcInput?.value.trim()) {
+    src = srcInput.value.trim();
+    name = nameFromAudioSource(src);
+  } else if (!clear && currentSrc) {
+    src = currentSrc;
+    name = currentName || nameFromAudioSource(currentSrc);
+  }
+
+  if (nameInput?.value.trim()) name = nameInput.value.trim();
+  const volume = Math.max(0, Math.min(1, Number(row.querySelector("[data-audio-volume]")?.value || 0.8)));
+  return { src, name, volume, enabled: Boolean(src) };
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("音频读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function nameFromAudioSource(src) {
+  if (!src || src.startsWith("data:")) return "";
+  try {
+    const path = src.startsWith("http") ? new URL(src).pathname : src;
+    return decodeURIComponent(path.split("/").filter(Boolean).pop() || "").slice(0, 80);
+  } catch {
+    return "";
+  }
+}
+
 function shell(content) {
   const user = state.user;
   const shellClass = `app-shell ${state.view === "table" ? "table-shell" : ""}`.trim();
@@ -805,15 +1068,10 @@ function lobbyView() {
           <label>
             <span>座位</span>
             <select name="maxSeats">
-              <option value="10">10 人桌</option>
               <option value="9">9 人桌</option>
-              <option value="8">8 人桌</option>
               <option value="7">7 人桌</option>
-              <option value="6">6 人桌</option>
               <option value="5">5 人桌</option>
-              <option value="4">4 人桌</option>
               <option value="3">3 人桌</option>
-              <option value="2">单挑桌</option>
             </select>
           </label>
           <button class="primary" type="submit">创建</button>
@@ -826,7 +1084,7 @@ function lobbyView() {
 function tableView() {
   const table = state.table;
   if (!table) return lobbyView();
-  const seatCount = table.maxSeats || 6;
+  const seatCount = table.maxSeats || 9;
   const seats = seatEntries(table);
   const isSeated = table.youSeat != null;
   const controls = table.controls || {};
@@ -884,6 +1142,7 @@ function toolbarActionsHtml(table) {
   const canDisband = Boolean(table.controls?.canDisband);
   const activeHand = Boolean(table.controls?.activeHand);
   return `
+    <button class="ghost slim bgm-toggle ${state.bgmEnabled ? "active" : ""}" data-action="toggle-bgm">${state.bgmEnabled ? "音乐开" : "静音"}</button>
     <button class="ghost slim rules-toggle ${state.rulesOpen ? "active" : ""}" data-action="toggle-rules" aria-expanded="${state.rulesOpen ? "true" : "false"}">规则</button>
     <button class="primary slim" data-action="start-hand" ${canStart ? "" : "disabled"}>发牌</button>
     <button class="ghost slim" data-action="leave-table" ${canLeave ? "" : "disabled"}>${activeHand ? "弃牌离桌" : "离桌"}</button>
@@ -1004,7 +1263,7 @@ function logsHtml(table) {
 }
 
 function seatEntries(table) {
-  const seatCount = table.maxSeats || 6;
+  const seatCount = table.maxSeats || 9;
   const anchor = table.youSeat == null ? 0 : table.youSeat;
   return Array.from({ length: seatCount }, (_, displaySeat) => {
     const actualSeat = table.youSeat == null ? displaySeat : (anchor + displaySeat) % seatCount;
@@ -1027,13 +1286,55 @@ function seatHtml(entry, table) {
 
 function seatStyle(entry, table) {
   if (entry.displaySeat === 0) return "";
-  const seatCount = Math.max(2, Number(table.maxSeats || 6));
+  const seatCount = Math.max(3, Number(table.maxSeats || 9));
   const opponentSlots = Math.max(1, seatCount - 1);
-  const t = opponentSlots === 1 ? 0.5 : (entry.displaySeat - 1) / (opponentSlots - 1);
-  const arc = Math.sin(t * Math.PI);
-  const x = 8 + t * 84;
-  const y = 34 - arc * 31;
+  const leftEdgePath = [
+    [18, 31],
+    [10, 43],
+    [8, 55],
+    [13, 66],
+    [24, 73]
+  ];
+  const rightEdgePath = [
+    [76, 73],
+    [87, 66],
+    [92, 55],
+    [90, 43],
+    [82, 31]
+  ];
+  const leftCount = Math.ceil(opponentSlots / 2);
+
+  if (entry.displaySeat <= leftCount) {
+    const p = sideSeatProgress(entry.displaySeat - 1, leftCount);
+    const [x, y] = interpolateSeatPath(leftEdgePath, p);
+    return `--seat-left:${x.toFixed(2)}%;--seat-top:${y.toFixed(2)}%`;
+  }
+
+  const rightCount = opponentSlots - leftCount;
+  const rightIndex = entry.displaySeat - leftCount - 1;
+  const p = sideSeatProgress(rightIndex, rightCount);
+  const [x, y] = interpolateSeatPath(rightEdgePath, p);
   return `--seat-left:${x.toFixed(2)}%;--seat-top:${y.toFixed(2)}%`;
+}
+
+function sideSeatProgress(index, count) {
+  if (count <= 1) return 0.56;
+  if (count === 2) return [0.18, 0.75][index] ?? 0.5;
+  if (count === 3) return [0, 0.48, 0.86][index] ?? 0.5;
+  return index / (count - 1);
+}
+
+function interpolateSeatPath(points, t) {
+  const clamped = Math.max(0, Math.min(1, Number(t) || 0));
+  const scaled = clamped * (points.length - 1);
+  const index = Math.min(points.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  const [x1, y1] = points[index];
+  const [x2, y2] = points[index + 1];
+  return [
+    x1 + (x2 - x1) * local,
+    y1 + (y2 - y1) * local
+  ];
 }
 
 function seatClassName(entry, table) {
@@ -1259,6 +1560,30 @@ function normalizeRaiseValue(value, min, max, step) {
   return Math.max(safeMin, Math.min(safeMax, safeMin + Math.ceil((bounded - safeMin) / safeStep) * safeStep));
 }
 
+function audioAssetRowHtml(kind, key, label, asset = {}, options = {}) {
+  const current = asset && typeof asset === "object" ? asset : {};
+  const src = String(current.src || "");
+  const isData = src.startsWith("data:");
+  const volume = Math.max(0, Math.min(1, Number(current.volume ?? (kind === "bgm" ? 0.36 : 0.8))));
+  const status = src ? (current.name || (isData ? "已上传音频" : nameFromAudioSource(src)) || "已设置") : "未设置";
+  return `
+    <div class="audio-row" data-audio-row data-audio-kind="${kind}" data-audio-key="${escapeAttr(key)}">
+      <div class="audio-label">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(status)}</span>
+      </div>
+      <input type="hidden" data-audio-current-src value="${escapeAttr(src)}" />
+      <input type="hidden" data-audio-current-name value="${escapeAttr(current.name || "")}" />
+      <input data-audio-src type="text" placeholder="https://... 或 /audio/xxx.mp3" value="${escapeAttr(isData ? "" : src)}" />
+      <input data-audio-name maxlength="80" placeholder="名称" value="${escapeAttr(current.name || "")}" />
+      <input data-audio-file type="file" accept="audio/*" />
+      <label class="audio-volume"><span>音量</span><input data-audio-volume type="range" min="0" max="1" step="0.05" value="${volume}" /></label>
+      ${options.bgm ? `<label class="audio-check"><input data-audio-enabled type="checkbox" ${current.enabled && src ? "checked" : ""} />启用</label>` : ""}
+      <label class="audio-check"><input data-audio-clear type="checkbox" />清空</label>
+    </div>
+  `;
+}
+
 function adminView() {
   const users = state.admin.users || [];
   const options = users.map((user) => `<option value="${user.id}">${escapeHtml(user.username)} · ${money(user.chips)}</option>`).join("");
@@ -1278,6 +1603,14 @@ function adminView() {
   const adminQuickMessages = Array.isArray(state.admin.quickMessages) && state.admin.quickMessages.length
     ? state.admin.quickMessages
     : TAUNT_MESSAGES;
+  const audioSettings = normalizeClientAudioSettings(state.admin.audioSettings);
+  const bgmAudioRow = audioAssetRowHtml("bgm", "bgm", "背景音乐", audioSettings.bgm, { bgm: true });
+  const actionAudioRows = AUDIO_ACTIONS
+    .map((item) => audioAssetRowHtml("action", item.key, item.label, audioSettings.actions?.[item.key]))
+    .join("");
+  const quickAudioRows = adminQuickMessages
+    .map((message) => audioAssetRowHtml("quick", message, message, audioSettings.quickMessages?.[message]))
+    .join("");
   const quickRows = adminQuickMessages.map((message) => `
     <span class="quick-message-chip">
       <b>${escapeHtml(message)}</b>
@@ -1365,6 +1698,18 @@ function adminView() {
         <div class="quick-message-list">${quickRows}</div>
       </section>
       <section class="admin-card wide-card">
+        <h2>音频设置</h2>
+        <form class="audio-settings-form" data-form="audio-settings">
+          <h3>BGM</h3>
+          ${bgmAudioRow}
+          <h3>玩家动作音效</h3>
+          <div class="audio-grid">${actionAudioRows}</div>
+          <h3>快捷语音效</h3>
+          <div class="audio-grid">${quickAudioRows}</div>
+          <button class="primary" type="submit">保存音频设置</button>
+        </form>
+      </section>
+      <section class="admin-card wide-card">
         <h2>用户账户</h2>
         <table>
           <thead><tr><th>用户</th><th>钱包</th><th>密码</th><th>角色</th><th>操作</th></tr></thead>
@@ -1409,13 +1754,15 @@ function render() {
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
   scheduleTableAnimations(previousAnimationTable, state.view === "table" ? state.table : null);
+  syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : null);
   state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
+  syncRealtimeSubscription();
 }
 
 function patchTableView(table) {
   syncShellChrome();
   const root = $app.querySelector(".game-layout");
-  if (!root || root.dataset.tableId !== table.id || Number(root.dataset.maxSeats) !== (table.maxSeats || 6)) {
+  if (!root || root.dataset.tableId !== table.id || Number(root.dataset.maxSeats) !== (table.maxSeats || 9)) {
     $app.innerHTML = tableView();
     return;
   }
@@ -1428,7 +1775,7 @@ function patchTableView(table) {
   setInnerHtml(root.querySelector(".toolbar-actions"), toolbarActionsHtml(table));
 
   const felt = root.querySelector(".felt-table");
-  if (felt) felt.className = `felt-table seats-${table.maxSeats || 6}`;
+  if (felt) felt.className = `felt-table seats-${table.maxSeats || 9}`;
   patchBoard(root, table);
   setInnerHtml(root.querySelector(".pot"), potHtml(table));
   syncShowdownOverlay(root, table);
@@ -1779,6 +2126,76 @@ function removeAfterAnimation(element, duration) {
 
 function clearTableEffects() {
   document.querySelectorAll(".fx-card-flight, .fx-chip-flight").forEach((element) => element.remove());
+  pauseBgm();
+}
+
+function syncTableAudio(previous, table) {
+  if (!table) {
+    pauseBgm();
+    return;
+  }
+
+  syncBgm(table);
+  const events = Array.isArray(table.audioEvents) ? table.audioEvents : [];
+  const maxSeq = events.reduce((max, event) => Math.max(max, Number(event.seq || 0)), 0);
+  const lastSeq = state.audioLastSeqByTable[table.id];
+  if (lastSeq == null || !previous || previous.id !== table.id) {
+    state.audioLastSeqByTable[table.id] = maxSeq;
+    return;
+  }
+
+  for (const event of events) {
+    if (Number(event.seq || 0) > lastSeq) playTableAudioEvent(table, event);
+  }
+  state.audioLastSeqByTable[table.id] = maxSeq;
+}
+
+function playTableAudioEvent(table, event) {
+  const settings = normalizeClientAudioSettings(table.audioSettings);
+  const asset = event.type === "quickMessage"
+    ? settings.quickMessages?.[event.message]
+    : settings.actions?.[event.type];
+  playAudioAsset(asset);
+}
+
+function playAudioAsset(asset) {
+  if (!asset?.src) return;
+  try {
+    const audio = new Audio(asset.src);
+    audio.volume = Math.max(0, Math.min(1, Number(asset.volume ?? 0.8)));
+    audio.play().catch(() => {});
+  } catch {
+    // Ignore unsupported or blocked audio; gameplay should never depend on sound.
+  }
+}
+
+function syncBgm(table = state.table) {
+  const bgm = normalizeClientAudioSettings(table?.audioSettings).bgm;
+  if (!state.bgmEnabled || !bgm.enabled || !bgm.src) {
+    pauseBgm();
+    return;
+  }
+
+  if (!bgmAudio || bgmAudioSrc !== bgm.src) {
+    pauseBgm();
+    bgmAudio = new Audio(bgm.src);
+    bgmAudio.loop = true;
+    bgmAudioSrc = bgm.src;
+  }
+  bgmAudio.volume = Math.max(0, Math.min(1, Number(bgm.volume ?? 0.36)));
+  bgmAudio.play().catch(() => {});
+}
+
+function pauseBgm() {
+  if (bgmAudio) bgmAudio.pause();
+}
+
+function toggleBgm() {
+  state.bgmEnabled = !state.bgmEnabled;
+  localStorage.setItem(BGM_ENABLED_KEY, state.bgmEnabled ? "1" : "0");
+  if (state.bgmEnabled) syncBgm();
+  else pauseBgm();
+  render();
 }
 
 function syncShellChrome() {
@@ -1885,6 +2302,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "set-password") setAdminPassword(form);
   if (form.dataset.form === "add-bot") addBot(form);
   if (form.dataset.form === "quick-message-add") addQuickMessage(form);
+  if (form.dataset.form === "audio-settings") saveAudioSettings(form);
   if (form.dataset.form === "chat-message") submitChatMessage(form);
 });
 
@@ -1990,6 +2408,7 @@ document.addEventListener("click", async (event) => {
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
   if (action === "disband-table") await disbandTable();
+  if (action === "toggle-bgm") toggleBgm();
   if (action === "toggle-rules") {
     state.rulesOpen = !state.rulesOpen;
     render();

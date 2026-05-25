@@ -3181,7 +3181,7 @@ th {
   z-index: 1200;
   display: grid;
   place-items: start center;
-  padding-top: 78px;
+  padding-top: clamp(84px, 13svh, 112px);
   opacity: 0;
   transform: translateY(-10px);
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -3194,51 +3194,52 @@ th {
 }
 
 .showdown-card {
-  width: min(540px, calc(100vw - 44px));
-  padding: 10px 16px 12px;
+  width: min(380px, calc(100vw - 44px));
+  padding: 8px 12px 10px;
   border: 1px solid rgba(255, 232, 142, 0.66);
-  border-radius: 10px;
+  border-radius: 8px;
   background:
     linear-gradient(180deg, rgba(45, 28, 8, 0.96), rgba(9, 8, 18, 0.94)),
     radial-gradient(circle at 50% 0%, rgba(255, 211, 91, 0.28), transparent 54%);
   box-shadow:
-    0 0 0 3px rgba(0, 0, 0, 0.22),
-    0 22px 70px rgba(0, 0, 0, 0.62),
-    0 0 34px rgba(255, 206, 76, 0.18);
-  pointer-events: auto;
+    0 0 0 2px rgba(0, 0, 0, 0.22),
+    0 14px 36px rgba(0, 0, 0, 0.54),
+    0 0 24px rgba(255, 206, 76, 0.16);
+  pointer-events: none;
   text-align: center;
 }
 
 .showdown-card h2 {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   color: #ffe486;
-  font-size: 18px;
+  font-size: 15px;
   letter-spacing: 0;
 }
 
 .showdown-winners {
   display: grid;
-  gap: 6px;
+  gap: 3px;
 }
 
 .showdown-winners p {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-height: 26px;
+  gap: 8px;
+  min-height: 21px;
   color: #fff;
   font-weight: 900;
+  font-size: 13px;
 }
 
 .showdown-winners span {
   color: #2fff85;
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .showdown-winners em {
   color: rgba(255, 245, 215, 0.8);
-  font-size: 13px;
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -3468,7 +3469,7 @@ th {
 
 .table-shell .seat-0 {
   left: 50%;
-  bottom: 8.2svh;
+  bottom: 4.8svh;
   width: 244px;
   height: 140px;
   transform: translateX(-50%);
@@ -3520,18 +3521,32 @@ th {
 }
 
 .table-shell .seat-0 .seat-bet {
-  left: 47px;
-  top: 105px;
+  left: 50px;
+  top: 101px;
   bottom: auto;
   z-index: 22;
-  min-width: 78px;
+  min-width: 98px;
   min-height: 24px;
   transform: translateX(-50%);
 }
 
 .table-shell .seat-0 .seat-bet .chip-stack {
-  padding: 1px 7px;
+  min-width: 98px;
+  gap: 4px;
+  padding: 1px 7px 1px 3px;
   font-size: 11px;
+}
+
+.table-shell .seat-0 .seat-bet .chip-stack.compact .chip-pile {
+  width: 34px;
+}
+
+.table-shell .seat-0 .seat-bet .chip-stack b {
+  position: relative;
+  z-index: 2;
+  min-width: 38px;
+  font-size: 12px;
+  text-align: left;
 }
 
 .table-shell .seat-0 .status-pill {
@@ -3806,9 +3821,10 @@ th {
   }
 }
 
-/* 10-seat live table pass: computed opponent arc, raised board, and admin tools. */
+/* Odd-seat live table pass: paired rail seating, raised board, and admin tools. */
 .table-shell .table-center {
-  inset: 22% 24% 36%;
+  inset: 10% 24% 50%;
+  grid-template-rows: minmax(76px, 1fr) 30px 28px;
 }
 
 .table-shell .board {
@@ -3983,6 +3999,74 @@ th {
   box-shadow: none;
 }
 
+.audio-settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.audio-settings-form h3 {
+  margin: 8px 0 0;
+  color: #ffe4a3;
+  font-size: 15px;
+}
+
+.audio-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.audio-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(180px, 1.3fr) minmax(120px, 0.8fr) minmax(150px, 1fr) 120px auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 229, 150, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.audio-label {
+  display: grid;
+  gap: 3px;
+}
+
+.audio-label strong {
+  color: #fff2cc;
+  font-size: 13px;
+}
+
+.audio-label span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.audio-row input[type="file"] {
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+}
+
+.audio-volume,
+.audio-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(255, 244, 222, 0.82);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.audio-volume input {
+  width: 70px;
+}
+
+.bgm-toggle.active {
+  border-color: rgba(70, 255, 151, 0.5);
+  color: #8cffc2;
+}
+
 .password-cell {
   max-width: 180px;
   color: #ffe6a8;
@@ -3996,6 +4080,15 @@ th {
 }
 
 @media (max-width: 1040px) {
+  .audio-row {
+    grid-template-columns: 1fr;
+  }
+
+  .audio-volume,
+  .audio-check {
+    justify-content: flex-start;
+  }
+
   .table-shell .felt-table .seat:not(.seat-0) {
     width: 82px;
     height: 80px;
