@@ -1,6 +1,15 @@
 const API_BASE = "/api";
 const STORAGE_KEY = "holdem_token";
 const CLIENT_KEY = "holdem_client_id";
+const TAUNT_MESSAGES = [
+  "跟得起吗？",
+  "这把我收了",
+  "别演了，摊牌吧",
+  "谢谢老板",
+  "牌桌上见真章",
+  "稳一点，别上头",
+  "人有多大胆，地有多大产"
+];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -21,6 +30,7 @@ const state = {
   scrollLock: null,
   raiseDrawerOpen: false,
   rulesOpen: false,
+  chatOpen: false,
   serverClockOffset: 0,
   countdownTimer: null,
   timeoutPollDeadline: "",
@@ -44,7 +54,21 @@ function nextCommandId(scope) {
 }
 
 function money(value) {
-  return Number(value || 0).toLocaleString("zh-CN");
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  const sign = number < 0 ? "-" : "";
+  const absolute = Math.abs(number);
+  const units = [
+    { value: 1_000_000_000, label: "B" },
+    { value: 1_000_000, label: "M" },
+    { value: 1_000, label: "K" }
+  ];
+  const unit = units.find((item) => absolute >= item.value);
+  if (!unit) return `${sign}${absolute.toLocaleString("zh-CN")}`;
+  const scaled = absolute / unit.value;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  const text = scaled.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  return `${sign}${text}${unit.label}`;
 }
 
 function stageLabel(status) {
@@ -437,6 +461,27 @@ async function playerAction(action, amount = null) {
   });
 }
 
+async function sendTaunt(message) {
+  if (!state.table || !TAUNT_MESSAGES.includes(message)) return;
+  try {
+    const result = await api(`/tables/${state.table.id}/taunt`, {
+      method: "POST",
+      body: {
+        message,
+        commandId: nextCommandId("taunt"),
+        tableRevision: state.table.revision || 0
+      }
+    });
+    syncServerClock(result.table?.serverTime);
+    state.table = result.table;
+    state.chatOpen = false;
+    render();
+  } catch (error) {
+    applyServerPayload(error.payload);
+    setMessage(error.message || "消息发送失败");
+  }
+}
+
 async function refreshTable(silent = true) {
   if (!state.table) return false;
   if (state.busy) return false;
@@ -708,6 +753,7 @@ function tableView() {
       </section>
       <aside class="side-panel">
         ${isSeated ? actionPanel(controls, table) : sitPanel(table)}
+        ${isSeated ? tauntPanelHtml() : ""}
         <div class="log-panel">
           <h2>牌局记录</h2>
           <div class="logs">${logsHtml(table)}</div>
@@ -738,6 +784,26 @@ function toolbarActionsHtml(table) {
     <button class="primary slim" data-action="start-hand" ${canStart ? "" : "disabled"}>发牌</button>
     <button class="ghost slim" data-action="leave-table" ${canLeave ? "" : "disabled"}>${activeHand ? "弃牌离桌" : "离桌"}</button>
     <button class="danger slim" data-action="disband-table" ${canDisband ? "" : "disabled"}>解散桌子</button>
+  `;
+}
+
+function tauntPanelHtml() {
+  return `
+    <div class="taunt-panel ${state.chatOpen ? "open" : ""}" aria-label="聊天框">
+      <button class="chat-toggle" data-action="toggle-chat" aria-expanded="${state.chatOpen ? "true" : "false"}">
+        <span>聊</span>
+        <strong>快捷聊天</strong>
+      </button>
+      <div class="taunt-chatbox" aria-hidden="${state.chatOpen ? "false" : "true"}">
+        <div class="chat-head">
+          <strong>聊天</strong>
+          <button class="ghost slim" data-action="toggle-chat">关闭</button>
+        </div>
+        <div class="chat-presets">
+          ${TAUNT_MESSAGES.map((message) => `<button type="button" data-taunt-message="${escapeAttr(message)}">${escapeHtml(message)}</button>`).join("")}
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -866,6 +932,7 @@ function seatContentHtml(entry, table) {
         <i>礼</i>
         ${isTurn ? `<em class="seat-timer" data-seat-timer="${actualSeat}"${timerStyle}>${timerText}</em>` : ""}
       </div>
+      ${tauntBubbleHtml(player)}
       <div class="hole-cards">${holeCards.slice(0, 2).map((card) => cardHtml(card, true)).join("")}</div>
       <div class="player-info">
         <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
@@ -875,6 +942,15 @@ function seatContentHtml(entry, table) {
       <div class="status-pill">${escapeHtml(player.lastAction || "等待")}${player.bestHandName ? ` · ${player.bestHandName}` : ""}</div>
     </div>
   `;
+}
+
+function tauntBubbleHtml(player) {
+  const taunt = player?.taunt;
+  if (!taunt?.text) return "";
+  const stamp = new Date(taunt.at || "").getTime();
+  const age = Number.isFinite(stamp) ? (Date.now() + state.serverClockOffset) - stamp : 0;
+  if (age > 8000) return "";
+  return `<div class="taunt-bubble">${escapeHtml(taunt.text)}</div>`;
 }
 
 function auditText(item) {
@@ -1173,9 +1249,31 @@ function patchTableView(table) {
     panel.outerHTML = nextPanel;
   }
   syncRaiseControls(root);
+  syncTauntPanel(root, table);
   syncRulesDrawer(root);
   syncActionCountdown();
   setInnerHtml(root.querySelector(".logs"), logsHtml(table));
+}
+
+function syncTauntPanel(root, table) {
+  const existing = root.querySelector(".taunt-panel");
+  const next = table.youSeat != null ? tauntPanelHtml().trim() : "";
+  if (!next) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) {
+    if (existing.outerHTML !== next) existing.outerHTML = next;
+    return;
+  }
+  const sidePanel = root.querySelector(".side-panel");
+  if (!sidePanel) return;
+  const logPanel = sidePanel.querySelector(".log-panel");
+  if (logPanel) {
+    logPanel.insertAdjacentHTML("beforebegin", next);
+  } else {
+    sidePanel.insertAdjacentHTML("beforeend", next);
+  }
 }
 
 function syncRulesDrawer(root = document) {
@@ -1615,6 +1713,11 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.tauntMessage) {
+    await sendTaunt(target.dataset.tauntMessage);
+    return;
+  }
+
   if (target.dataset.raisePreset) {
     setRaiseAmount(Number(target.dataset.raisePreset));
     return;
@@ -1641,6 +1744,7 @@ document.addEventListener("click", async (event) => {
     state.view = "lobby";
     state.table = null;
     state.rulesOpen = false;
+    state.chatOpen = false;
     stopPolling();
     await loadLobby();
     startPolling();
@@ -1652,6 +1756,10 @@ document.addEventListener("click", async (event) => {
   if (action === "disband-table") await disbandTable();
   if (action === "toggle-rules") {
     state.rulesOpen = !state.rulesOpen;
+    render();
+  }
+  if (action === "toggle-chat") {
+    state.chatOpen = !state.chatOpen;
     render();
   }
   if (action === "toggle-raise") {

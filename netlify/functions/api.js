@@ -7,6 +7,15 @@ const STORE_NAME = "holdem-state";
 const LOCAL_DB_FILE = path.join(process.cwd(), ".data", "poker-db.json");
 const ACTIVE_STAGES = new Set(["preflop", "flop", "turn", "river"]);
 const ACTION_TIMEOUT_MS = 20000;
+const TAUNT_MESSAGES = [
+  "跟得起吗？",
+  "这把我收了",
+  "别演了，摊牌吧",
+  "谢谢老板",
+  "牌桌上见真章",
+  "稳一点，别上头",
+  "人有多大胆，地有多大产"
+];
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
@@ -835,6 +844,7 @@ function publicTable(table, viewer) {
         allIn: player.allIn,
         inHand: player.inHand,
         lastAction: player.lastAction,
+        taunt: player.taunt || null,
         bestHandName: reveal ? player.bestHandName : null,
         hole: ownCards || reveal ? player.hole : (player.hole || []).map(() => null)
       };
@@ -1226,6 +1236,14 @@ function handleAction(table, user, body) {
   maybeAdvance(table, player.seat);
 }
 
+function handleTaunt(table, user, body) {
+  const player = requireSeated(table, user);
+  const text = String(body.message || "").trim();
+  if (!TAUNT_MESSAGES.includes(text)) throw new HttpError(400, "请选择固定消息");
+  player.taunt = { text, at: nowIso(), handNo: table.handNo || 0 };
+  addLog(table, `${player.username}：${text}`);
+}
+
 function processBotTurns(table) {
   let changed = false;
   let guard = 0;
@@ -1525,6 +1543,21 @@ exports.handler = async (event) => {
           runAutomaticTableActions(table);
           touchTable(table);
           rememberCommand(table, user, body, "action");
+          return { table: publicTable(table, user) };
+        });
+        return json(200, result);
+      }
+
+      if (method === "POST" && segments[1] && segments[2] === "taunt") {
+        const result = await withDb((db) => {
+          const user = requireUser(db, event);
+          const table = getTableOrThrow(db, segments[1]);
+          if (commandAlreadyApplied(table, user, body, "taunt")) {
+            return { table: publicTable(table, user), duplicate: true };
+          }
+          handleTaunt(table, user, body);
+          touchTable(table);
+          rememberCommand(table, user, body, "taunt");
           return { table: publicTable(table, user) };
         });
         return json(200, result);
