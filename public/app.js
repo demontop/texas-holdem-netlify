@@ -1312,18 +1312,18 @@ function seatStyle(entry, table) {
   const seatCount = Math.max(3, Number(table.maxSeats || 9));
   const opponentSlots = Math.max(1, seatCount - 1);
   const leftEdgePath = [
-    [18, 31],
-    [10, 43],
-    [8, 55],
-    [13, 66],
-    [24, 73]
+    [20, 27],
+    [9, 42],
+    [7, 55],
+    [13, 68],
+    [25, 74]
   ];
   const rightEdgePath = [
-    [76, 73],
-    [87, 66],
-    [92, 55],
-    [90, 43],
-    [82, 31]
+    [75, 74],
+    [87, 68],
+    [93, 55],
+    [91, 42],
+    [80, 27]
   ];
   const leftCount = Math.ceil(opponentSlots / 2);
 
@@ -1344,6 +1344,7 @@ function sideSeatProgress(index, count) {
   if (count <= 1) return 0.56;
   if (count === 2) return [0.18, 0.75][index] ?? 0.5;
   if (count === 3) return [0, 0.48, 0.86][index] ?? 0.5;
+  if (count === 4) return [0, 0.26, 0.72, 1][index] ?? 0.5;
   return index / (count - 1);
 }
 
