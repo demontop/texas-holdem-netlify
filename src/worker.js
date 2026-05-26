@@ -956,6 +956,7 @@ function publicTable(table, viewer) {
     pot: table.pot,
     community: table.community || [],
     winners: table.winners || [],
+    revealed: Boolean(table.revealed),
     logs: table.logs || [],
     chat: table.chat || [],
     quickMessages: table.quickMessages || TAUNT_MESSAGES,

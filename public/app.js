@@ -1228,9 +1228,19 @@ function rulesPanelHtml() {
 function showdownOverlayHtml(table) {
   const winners = table.winners || [];
   const visible = table.status === "showdown" && winners.length > 0;
-  const winnerRows = winners.map((winner) => `
-    <p><strong>${escapeHtml(winner.username)}</strong><span>+${money(winner.amount)}</span>${winner.hand ? `<em>${escapeHtml(winner.hand)}</em>` : ""}</p>
-  `).join("");
+  const winnerRows = winners.map((winner) => {
+    const cards = showdownWinnerCardsHtml(table, winner);
+    return `
+      <article class="showdown-winner ${cards ? "has-cards" : ""}">
+        <div class="showdown-winner-main">
+          <strong>${escapeHtml(winner.username)}</strong>
+          <span>+${money(winner.amount)}</span>
+          ${winner.hand ? `<em>${escapeHtml(winner.hand)}</em>` : ""}
+        </div>
+        ${cards}
+      </article>
+    `;
+  }).join("");
   const stackRows = (table.seats || []).filter(Boolean).map((player) => `
     <span>${escapeHtml(player.username)} <b>${money(player.stack)}</b></span>
   `).join("");
@@ -1243,6 +1253,14 @@ function showdownOverlayHtml(table) {
       </div>
     </section>
   `;
+}
+
+function showdownWinnerCardsHtml(table, winner) {
+  if (!table.revealed) return "";
+  const player = (table.seats || []).find((seat) => seat && seat.userId === winner.userId);
+  const cards = (player?.hole || []).slice(0, 2).filter(Boolean);
+  if (cards.length < 2) return "";
+  return `<div class="showdown-winner-cards">${cards.map((card) => cardHtml(card, true)).join("")}</div>`;
 }
 
 function boardCards(table) {
@@ -1349,7 +1367,7 @@ function seatClassName(entry, table) {
   const isTurn = table.currentTurnSeat === actualSeat;
   const winnerIds = new Set((table.winners || []).map((winner) => winner.userId));
   const hasFaceUpHole = player?.hole?.some(Boolean);
-  const isWinner = player && table.status === "showdown" && winnerIds.has(player.userId) && hasFaceUpHole;
+  const isWinner = player && table.status === "showdown" && table.revealed && winnerIds.has(player.userId) && hasFaceUpHole;
   return ["seat", `seat-${displaySeat}`, occupied ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", isWinner ? "winner" : "", player?.folded ? "folded" : ""]
     .filter(Boolean)
     .join(" ");
