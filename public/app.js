@@ -38,6 +38,7 @@ const SLOT_SYMBOLS = {
 };
 const SLOT_DEFAULT_REELS = ["seven", "bar", "diamond"];
 const SLOT_BET_PRESETS = [50, 100, 500, 1000];
+const SLOT_REVEAL_DELAY_MS = 1800;
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -489,6 +490,7 @@ async function spinSlots(formElement) {
   if (state.slot.spinning) return;
   const form = new FormData(formElement);
   const bet = Math.max(10, Number(form.get("bet") || state.slot.bet || 100));
+  const startedAt = performance.now();
   state.slot = {
     ...state.slot,
     bet,
@@ -502,6 +504,8 @@ async function spinSlots(formElement) {
       method: "POST",
       body: { bet, commandId: nextCommandId("slot") }
     });
+    const remainingDelay = SLOT_REVEAL_DELAY_MS - (performance.now() - startedAt);
+    if (remainingDelay > 0) await sleep(remainingDelay);
     state.user = result.user || state.user;
     state.slot = {
       ...state.slot,
@@ -514,6 +518,10 @@ async function spinSlots(formElement) {
   });
   state.slot.spinning = false;
   render();
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function createTable(formElement) {
