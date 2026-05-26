@@ -26,6 +26,17 @@ const AUDIO_ACTIONS = ["start", "deal", "fold", "check", "call", "bet", "raise",
 const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
 const SUITS = ["S", "H", "D", "C"];
 const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 2]));
+const SLOT_HISTORY_LIMIT = 120;
+const SLOT_MIN_BET = 10;
+const SLOT_MAX_BET = 100000;
+const SLOT_SYMBOLS = [
+  { id: "cherry", label: "樱桃", weight: 24, triple: 5 },
+  { id: "lemon", label: "柠檬", weight: 22, triple: 4 },
+  { id: "bell", label: "金铃", weight: 17, triple: 8 },
+  { id: "bar", label: "BAR", weight: 13, triple: 12 },
+  { id: "seven", label: "幸运 7", weight: 8, triple: 25 },
+  { id: "diamond", label: "钻石", weight: 5, triple: 50 }
+];
 
 class HttpError extends Error {
   constructor(statusCode, message, payload = {}) {
@@ -42,6 +53,7 @@ function defaultDb() {
     users: {},
     sessions: {},
     tables: {},
+    slotHistory: [],
     audit: []
   };
 }
@@ -60,6 +72,7 @@ function normalizeDb(db) {
   db.users = db.users || {};
   db.sessions = db.sessions || {};
   db.tables = db.tables || {};
+  db.slotHistory = Array.isArray(db.slotHistory) ? db.slotHistory.slice(0, SLOT_HISTORY_LIMIT) : [];
   db.audit = db.audit || [];
   db.quickMessages = normalizeQuickMessages(db.quickMessages);
   db.audioSettings = normalizeAudioSettings(db.audioSettings);
@@ -1113,6 +1126,103 @@ function randomBotName() {
   return names[randomInt(names.length)];
 }
 
+function slotSymbolPublic(symbol) {
+  return {
+    id: symbol.id,
+    label: symbol.label,
+    triple: symbol.triple
+  };
+}
+
+function slotHistoryForUser(db, userId) {
+  return (db.slotHistory || [])
+    .filter((entry) => entry.userId === userId)
+    .slice(0, 18);
+}
+
+function slotsPayload(db, user) {
+  return {
+    user: userPublic(user),
+    minBet: SLOT_MIN_BET,
+    maxBet: SLOT_MAX_BET,
+    symbols: SLOT_SYMBOLS.map(slotSymbolPublic),
+    history: slotHistoryForUser(db, user.id)
+  };
+}
+
+function drawSlotSymbol() {
+  const total = SLOT_SYMBOLS.reduce((sum, symbol) => sum + symbol.weight, 0);
+  let roll = randomInt(total);
+  for (const symbol of SLOT_SYMBOLS) {
+    roll -= symbol.weight;
+    if (roll < 0) return symbol;
+  }
+  return SLOT_SYMBOLS[0];
+}
+
+function scoreSlot(symbols, bet) {
+  const counts = new Map();
+  for (const symbol of symbols) counts.set(symbol.id, (counts.get(symbol.id) || 0) + 1);
+  const triple = symbols.find((symbol) => counts.get(symbol.id) === 3);
+  if (triple) {
+    const payout = bet * triple.triple;
+    return {
+      payout,
+      multiplier: triple.triple,
+      title: `${triple.label} 三连`,
+      tier: triple.id === "diamond" || triple.id === "seven" ? "jackpot" : "win"
+    };
+  }
+
+  const pair = symbols.find((symbol) => counts.get(symbol.id) === 2);
+  if (pair) {
+    const multiplier = pair.id === "diamond" ? 4 : pair.id === "seven" ? 3 : pair.id === "bar" ? 2 : 1;
+    return {
+      payout: bet * multiplier,
+      multiplier,
+      title: `${pair.label} 一对`,
+      tier: multiplier > 1 ? "win" : "push"
+    };
+  }
+
+  return {
+    payout: 0,
+    multiplier: 0,
+    title: "未中奖",
+    tier: "miss"
+  };
+}
+
+function spinSlots(db, user, body) {
+  const bet = clampInt(body.bet, SLOT_MIN_BET, SLOT_MAX_BET);
+  if (bet > user.chips) throw new HttpError(400, "钱包筹码不足");
+  const symbols = [drawSlotSymbol(), drawSlotSymbol(), drawSlotSymbol()];
+  const score = scoreSlot(symbols, bet);
+  user.chips = Math.max(0, user.chips - bet + score.payout);
+  touchUser(user);
+
+  const entry = {
+    id: randomId(6),
+    at: nowIso(),
+    userId: user.id,
+    username: user.username,
+    bet,
+    payout: score.payout,
+    profit: score.payout - bet,
+    multiplier: score.multiplier,
+    title: score.title,
+    tier: score.tier,
+    symbols: symbols.map((symbol) => symbol.id)
+  };
+  db.slotHistory.unshift(entry);
+  db.slotHistory = db.slotHistory.slice(0, SLOT_HISTORY_LIMIT);
+  return {
+    user: userPublic(user),
+    result: entry,
+    history: slotHistoryForUser(db, user.id)
+  };
+}
+
 function createTable(owner, body) {
   const smallBlind = clampInt(body.smallBlind || 10, 1, 10000);
   const bigBlind = clampInt(body.bigBlind || smallBlind * 2, smallBlind + 1, 20000);
@@ -1334,6 +1444,7 @@ function deleteUserAccount(db, admin, user) {
   for (const [token, session] of Object.entries(db.sessions)) {
     if (session.userId === user.id) delete db.sessions[token];
   }
+  db.slotHistory = (db.slotHistory || []).filter((entry) => entry.userId !== user.id);
   delete db.users[user.id];
 }
 
@@ -1788,6 +1899,22 @@ async function handleApiRequest(request, store, env = {}) {
         user: userPublic(user),
         tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
       });
+    }
+
+    if (segments[0] === "slots") {
+      if (method === "GET" && segments.length === 1) {
+        const db = await readDb();
+        const user = requireUser(db, event, { refreshSession: false });
+        return json(200, slotsPayload(db, user));
+      }
+
+      if (method === "POST" && segments[1] === "spin") {
+        const result = await withDb((db) => {
+          const user = requireUser(db, event);
+          return spinSlots(db, user, body);
+        });
+        return json(200, result);
+      }
     }
 
     if (segments[0] === "tables") {

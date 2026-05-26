@@ -28,6 +28,16 @@ const AUDIO_ACTIONS = [
   { key: "timeout", label: "超时弃牌" },
   { key: "showdown", label: "结算" }
 ];
+const SLOT_SYMBOLS = {
+  cherry: { label: "樱桃", glyph: "樱", className: "cherry", triple: "5x" },
+  lemon: { label: "柠檬", glyph: "柠", className: "lemon", triple: "4x" },
+  bell: { label: "金铃", glyph: "铃", className: "bell", triple: "8x" },
+  bar: { label: "BAR", glyph: "BAR", className: "bar", triple: "12x" },
+  seven: { label: "幸运 7", glyph: "7", className: "seven", triple: "25x" },
+  diamond: { label: "钻石", glyph: "◆", className: "diamond", triple: "50x" }
+};
+const SLOT_DEFAULT_REELS = ["seven", "bar", "diamond"];
+const SLOT_BET_PRESETS = [50, 100, 500, 1000];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -36,6 +46,7 @@ const state = {
   user: null,
   tables: [],
   table: null,
+  slot: { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 },
   view: "auth",
   authMode: "login",
   message: "",
@@ -410,6 +421,7 @@ function logout() {
   state.user = null;
   state.tables = [];
   state.table = null;
+  state.slot = { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 };
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
@@ -454,6 +466,54 @@ async function loadLobby(silent = false) {
   } catch (error) {
     if (!silent) setMessage(error.message);
   }
+}
+
+async function openSlots() {
+  await runBusy(async () => {
+    const result = await api("/slots");
+    state.user = result.user || state.user;
+    state.slot = {
+      ...state.slot,
+      history: result.history || [],
+      result: state.slot.result,
+      reels: state.slot.reels || SLOT_DEFAULT_REELS,
+      spinning: false
+    };
+    state.table = null;
+    state.view = "slots";
+    stopPolling();
+  });
+}
+
+async function spinSlots(formElement) {
+  if (state.slot.spinning) return;
+  const form = new FormData(formElement);
+  const bet = Math.max(10, Number(form.get("bet") || state.slot.bet || 100));
+  state.slot = {
+    ...state.slot,
+    bet,
+    result: null,
+    spinning: true,
+    reels: slotSpinPreview()
+  };
+  render();
+  await runBusy(async () => {
+    const result = await api("/slots/spin", {
+      method: "POST",
+      body: { bet, commandId: nextCommandId("slot") }
+    });
+    state.user = result.user || state.user;
+    state.slot = {
+      ...state.slot,
+      history: result.history || [],
+      result: result.result || null,
+      reels: result.result?.symbols || state.slot.reels || SLOT_DEFAULT_REELS,
+      spinning: false
+    };
+    state.view = "slots";
+  });
+  state.slot.spinning = false;
+  render();
 }
 
 async function createTable(formElement) {
@@ -973,6 +1033,7 @@ function shell(content) {
         </button>
         <div class="top-actions">
           ${user ? `<span class="wallet">${chipStackHtml(user.chips, true)}<span>${user.username}</span></span>` : ""}
+          ${user ? `<button class="icon-text" data-action="slots">老虎机</button>` : ""}
           ${user?.isAdmin ? `<button class="icon-text" data-action="admin">后台</button>` : ""}
           ${user ? `<button class="ghost" data-action="logout">退出</button>` : ""}
         </div>
@@ -1077,6 +1138,109 @@ function lobbyTableRowHtml(table) {
 
 function lobbyTableMeta(table) {
   return `${stageLabel(table.status)} · ${table.players}/${table.maxSeats} 人 · ${table.smallBlind}/${table.bigBlind}`;
+}
+
+function slotsView() {
+  const slot = state.slot || {};
+  const reels = slot.reels?.length ? slot.reels : SLOT_DEFAULT_REELS;
+  const bet = Math.max(10, Number(slot.bet || 100));
+  return shell(`
+    <main class="slots-view">
+      <section class="slot-machine ${slot.spinning ? "spinning" : ""}">
+        <div class="section-title">
+          <div>
+            <h1>幸运老虎机</h1>
+            <p>钱包筹码玩法，开奖结果由服务器生成</p>
+          </div>
+          <button class="ghost" data-action="lobby">返回大厅</button>
+        </div>
+        <div class="slot-cabinet">
+          <div class="slot-lights" aria-hidden="true"></div>
+          <div class="slot-reels" aria-label="老虎机转轮">
+            ${reels.slice(0, 3).map((symbol, index) => slotReelHtml(symbol, index, slot.spinning)).join("")}
+          </div>
+          <div class="slot-result ${slot.result ? slot.result.tier : "idle"}">
+            ${slotResultHtml(slot.result)}
+          </div>
+          <form class="slot-controls" data-form="slot-spin">
+            <label>
+              <span>下注筹码</span>
+              <input name="bet" data-slot-bet-input type="number" min="10" step="10" value="${escapeAttr(bet)}" />
+            </label>
+            <div class="slot-bets">
+              ${SLOT_BET_PRESETS.map((value) => `<button class="ghost slim" type="button" data-slot-bet="${value}">${money(value)}</button>`).join("")}
+            </div>
+            <button class="primary slot-spin-button" type="submit" ${slot.spinning || bet > Number(state.user?.chips || 0) ? "disabled" : ""}>
+              ${slot.spinning ? "旋转中" : "开始旋转"}
+            </button>
+          </form>
+        </div>
+      </section>
+      <aside class="slot-side">
+        <section class="slot-card">
+          <h2>赔率表</h2>
+          <div class="slot-paytable">${slotPaytableHtml()}</div>
+        </section>
+        <section class="slot-card">
+          <h2>最近记录</h2>
+          <div class="slot-history">${slotHistoryHtml(slot.history || [])}</div>
+        </section>
+      </aside>
+    </main>
+  `);
+}
+
+function slotReelHtml(symbolId, index, spinning = false) {
+  const symbol = slotSymbolMeta(symbolId);
+  const track = ["diamond", "seven", "bar", "bell", "cherry", "lemon", symbolId];
+  return `
+    <div class="slot-reel reel-${index + 1}">
+      <div class="slot-reel-track ${spinning ? "rolling" : ""}">
+        ${track.map((item) => slotSymbolHtml(item)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function slotSymbolHtml(symbolId) {
+  const symbol = slotSymbolMeta(symbolId);
+  return `<span class="slot-symbol ${symbol.className}" title="${escapeAttr(symbol.label)}">${escapeHtml(symbol.glyph)}</span>`;
+}
+
+function slotSymbolMeta(symbolId) {
+  return SLOT_SYMBOLS[symbolId] || SLOT_SYMBOLS.cherry;
+}
+
+function slotResultHtml(result) {
+  if (!result) return `<strong>等待旋转</strong><span>选择下注后开始</span>`;
+  const profit = Number(result.profit || 0);
+  const text = profit > 0 ? `净赢 ${money(profit)}` : profit === 0 ? "保本" : `亏损 ${money(Math.abs(profit))}`;
+  return `<strong>${escapeHtml(result.title || "开奖结果")}</strong><span>${text} · 派彩 ${money(result.payout || 0)}</span>`;
+}
+
+function slotPaytableHtml() {
+  const triples = Object.entries(SLOT_SYMBOLS)
+    .map(([id, symbol]) => `<p>${slotSymbolHtml(id)}<span>${escapeHtml(symbol.label)} 三连</span><b>${symbol.triple}</b></p>`)
+    .join("");
+  return `${triples}<p><i>一对</i><span>钻石一对</span><b>4x</b></p><p><i>一对</i><span>幸运 7 一对</span><b>3x</b></p><p><i>一对</i><span>BAR 一对</span><b>2x</b></p><p><i>一对</i><span>普通一对</span><b>1x</b></p>`;
+}
+
+function slotHistoryHtml(history) {
+  if (!history.length) return `<p class="slot-empty">暂无记录</p>`;
+  return history.map((entry) => `
+    <article class="slot-history-row ${entry.tier || "miss"}">
+      <div>${(entry.symbols || []).map((symbol) => slotSymbolHtml(symbol)).join("")}</div>
+      <strong>${escapeHtml(entry.title || "旋转")}</strong>
+      <span>下注 ${money(entry.bet || 0)} · ${entry.profit >= 0 ? "+" : "-"}${money(Math.abs(entry.profit || 0))}</span>
+    </article>
+  `).join("");
+}
+
+function slotSpinPreview() {
+  return SLOT_DEFAULT_REELS.map(() => {
+    const ids = Object.keys(SLOT_SYMBOLS);
+    return ids[Math.floor(Math.random() * ids.length)] || "cherry";
+  });
 }
 
 function tableView() {
@@ -1766,6 +1930,8 @@ function render() {
     } else {
       $app.innerHTML = tableView();
     }
+  } else if (state.view === "slots") {
+    $app.innerHTML = slotsView();
   } else if (state.view === "admin") {
     $app.innerHTML = adminView();
   } else {
@@ -2417,6 +2583,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "quick-message-add") addQuickMessage(form);
   if (form.dataset.form === "audio-settings") saveAudioSettings(form);
   if (form.dataset.form === "chat-message") submitChatMessage(form);
+  if (form.dataset.form === "slot-spin") spinSlots(form);
 });
 
 document.addEventListener("pointerdown", (event) => {
@@ -2490,6 +2657,13 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.slotBet) {
+    const input = document.querySelector("[data-slot-bet-input]");
+    if (input) input.value = target.dataset.slotBet;
+    state.slot.bet = Number(target.dataset.slotBet);
+    return;
+  }
+
   if (target.dataset.raisePreset) {
     setRaiseAmount(Number(target.dataset.raisePreset));
     return;
@@ -2522,6 +2696,7 @@ document.addEventListener("click", async (event) => {
     startPolling();
   }
   if (action === "refresh-lobby") await loadLobby();
+  if (action === "slots") await openSlots();
   if (action === "admin") await loadAdmin();
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
