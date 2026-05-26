@@ -478,7 +478,8 @@ async function openSlots() {
       history: result.history || [],
       result: state.slot.result,
       reels: state.slot.reels || SLOT_DEFAULT_REELS,
-      spinning: false
+      spinning: false,
+      settling: false
     };
     state.table = null;
     state.view = "slots";
@@ -490,13 +491,13 @@ async function spinSlots(formElement) {
   if (state.slot.spinning) return;
   const form = new FormData(formElement);
   const bet = Math.max(10, Number(form.get("bet") || state.slot.bet || 100));
-  const startedAt = performance.now();
   state.slot = {
     ...state.slot,
     bet,
     result: null,
     spinning: true,
-    reels: slotSpinPreview()
+    settling: false,
+    reels: state.slot.reels?.length ? state.slot.reels : SLOT_DEFAULT_REELS
   };
   render();
   await runBusy(async () => {
@@ -504,20 +505,34 @@ async function spinSlots(formElement) {
       method: "POST",
       body: { bet, commandId: nextCommandId("slot") }
     });
-    const remainingDelay = SLOT_REVEAL_DELAY_MS - (performance.now() - startedAt);
-    if (remainingDelay > 0) await sleep(remainingDelay);
+    const finalReels = Array.isArray(result.result?.symbols) && result.result.symbols.length
+      ? result.result.symbols
+      : state.slot.reels || SLOT_DEFAULT_REELS;
+    state.slot = {
+      ...state.slot,
+      result: null,
+      reels: finalReels,
+      spinning: true,
+      settling: true
+    };
+    state.view = "slots";
+    render();
+    await sleep(SLOT_REVEAL_DELAY_MS);
     state.user = result.user || state.user;
     state.slot = {
       ...state.slot,
       history: result.history || [],
       result: result.result || null,
-      reels: result.result?.symbols || state.slot.reels || SLOT_DEFAULT_REELS,
-      spinning: false
+      reels: finalReels,
+      spinning: false,
+      settling: false
     };
     state.view = "slots";
   });
-  state.slot.spinning = false;
-  render();
+  if (state.slot.spinning || state.slot.settling) {
+    state.slot = { ...state.slot, spinning: false, settling: false };
+    render();
+  }
 }
 
 function sleep(ms) {
@@ -1152,6 +1167,7 @@ function slotsView() {
   const slot = state.slot || {};
   const reels = slot.reels?.length ? slot.reels : SLOT_DEFAULT_REELS;
   const bet = Math.max(10, Number(slot.bet || 100));
+  const reelSpinMode = slot.spinning && slot.settling ? "rolling" : "";
   return shell(`
     <main class="slots-view">
       <section class="slot-machine ${slot.spinning ? "spinning" : ""}">
@@ -1165,7 +1181,7 @@ function slotsView() {
         <div class="slot-cabinet">
           <div class="slot-lights" aria-hidden="true"></div>
           <div class="slot-reels" aria-label="老虎机转轮">
-            ${reels.slice(0, 3).map((symbol, index) => slotReelHtml(symbol, index, slot.spinning)).join("")}
+            ${reels.slice(0, 3).map((symbol, index) => slotReelHtml(symbol, index, reelSpinMode)).join("")}
           </div>
           <div class="slot-result ${slot.result ? slot.result.tier : "idle"}">
             ${slotResultHtml(slot.result)}
@@ -1198,12 +1214,12 @@ function slotsView() {
   `);
 }
 
-function slotReelHtml(symbolId, index, spinning = false) {
-  const symbol = slotSymbolMeta(symbolId);
+function slotReelHtml(symbolId, index, spinMode = "") {
   const track = ["diamond", "seven", "bar", "bell", "cherry", "lemon", symbolId];
+  const modeClass = spinMode === "rolling" ? " rolling" : "";
   return `
     <div class="slot-reel reel-${index + 1}">
-      <div class="slot-reel-track ${spinning ? "rolling" : ""}">
+      <div class="slot-reel-track${modeClass}">
         ${track.map((item) => slotSymbolHtml(item)).join("")}
       </div>
     </div>
@@ -1242,13 +1258,6 @@ function slotHistoryHtml(history) {
       <span>下注 ${money(entry.bet || 0)} · ${entry.profit >= 0 ? "+" : "-"}${money(Math.abs(entry.profit || 0))}</span>
     </article>
   `).join("");
-}
-
-function slotSpinPreview() {
-  return SLOT_DEFAULT_REELS.map(() => {
-    const ids = Object.keys(SLOT_SYMBOLS);
-    return ids[Math.floor(Math.random() * ids.length)] || "cherry";
-  });
 }
 
 function tableView() {
