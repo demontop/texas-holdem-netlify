@@ -38,7 +38,7 @@ const SLOT_SYMBOLS = {
 };
 const SLOT_DEFAULT_REELS = ["seven", "bar", "diamond"];
 const SLOT_BET_PRESETS = [50, 100, 500, 1000];
-const SLOT_REVEAL_DELAY_MS = 1800;
+const SLOT_REVEAL_DELAY_MS = 3600;
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",

@@ -424,15 +424,15 @@ h2 {
 }
 
 .slot-reel-track.rolling {
-  animation: slotRoll 1.8s cubic-bezier(0.12, 0.78, 0.18, 1) 1 both;
+  animation: slotRoll 3.6s cubic-bezier(0.12, 0.78, 0.18, 1) 1 both;
 }
 
 .reel-2 .slot-reel-track.rolling {
-  animation-duration: 1.8s;
+  animation-duration: 3.6s;
 }
 
 .reel-3 .slot-reel-track.rolling {
-  animation-duration: 1.8s;
+  animation-duration: 3.6s;
 }
 
 .slot-symbol {
