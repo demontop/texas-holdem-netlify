@@ -54,6 +54,7 @@ const SLOT_REEL_STRIPS = [
   ["seven", "bell", "cherry", "bar", "diamond", "lemon", "crown", "coin", "horseshoe", "clover", "bar", "seven", "bell", "diamond", "coin", "cherry", "crown", "lemon", "clover", "horseshoe"],
   ["bar", "diamond", "lemon", "seven", "cherry", "bell", "horseshoe", "coin", "crown", "clover", "diamond", "bar", "lemon", "seven", "coin", "bell", "crown", "cherry", "horseshoe", "clover"]
 ];
+const BLACKJACK_BET_PRESETS = [50, 100, 500, 1000];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -63,6 +64,7 @@ const state = {
   tables: [],
   table: null,
   slot: { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 },
+  blackjack: { hand: null, history: [], bet: 100 },
   view: "auth",
   authMode: "login",
   message: "",
@@ -438,6 +440,7 @@ function logout() {
   state.tables = [];
   state.table = null;
   state.slot = { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 };
+  state.blackjack = { hand: null, history: [], bet: 100 };
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
@@ -548,6 +551,55 @@ async function spinSlots(formElement) {
     state.slot = { ...state.slot, spinning: false, settling: false };
     render();
   }
+}
+
+async function openBlackjack() {
+  await runBusy(async () => {
+    const result = await api("/blackjack");
+    state.user = result.user || state.user;
+    state.blackjack = {
+      ...state.blackjack,
+      hand: result.hand || null,
+      history: result.history || [],
+      bet: state.blackjack.bet || 100
+    };
+    state.table = null;
+    state.view = "blackjack";
+    stopPolling();
+  });
+}
+
+async function dealBlackjack(formElement) {
+  const form = new FormData(formElement);
+  const bet = Math.max(10, Number(form.get("bet") || state.blackjack.bet || 100));
+  state.blackjack = { ...state.blackjack, bet };
+  await runBusy(async () => {
+    const result = await api("/blackjack/deal", {
+      method: "POST",
+      body: { bet, commandId: nextCommandId("blackjack-deal") }
+    });
+    applyBlackjackPayload(result);
+  });
+}
+
+async function blackjackAction(action) {
+  await runBusy(async () => {
+    const result = await api(`/blackjack/${action}`, {
+      method: "POST",
+      body: { commandId: nextCommandId(`blackjack-${action}`) }
+    });
+    applyBlackjackPayload(result);
+  });
+}
+
+function applyBlackjackPayload(result) {
+  state.user = result.user || state.user;
+  state.blackjack = {
+    ...state.blackjack,
+    hand: result.hand || null,
+    history: result.history || []
+  };
+  state.view = "blackjack";
 }
 
 function sleep(ms) {
@@ -1072,6 +1124,7 @@ function shell(content) {
         <div class="top-actions">
           ${user ? `<span class="wallet">${chipStackHtml(user.chips, true)}<span>${user.username}</span></span>` : ""}
           ${user ? `<button class="icon-text" data-action="slots">老虎机</button>` : ""}
+          ${user ? `<button class="icon-text" data-action="blackjack">21点</button>` : ""}
           ${user?.isAdmin ? `<button class="icon-text" data-action="admin">后台</button>` : ""}
           ${user ? `<button class="ghost" data-action="logout">退出</button>` : ""}
         </div>
@@ -1309,6 +1362,130 @@ function slotHistoryHtml(history) {
       <span>下注 ${money(entry.bet || 0)} · ${entry.profit >= 0 ? "+" : "-"}${money(Math.abs(entry.profit || 0))}</span>
     </article>
   `).join("");
+}
+
+function blackjackView() {
+  const game = state.blackjack || {};
+  const hand = game.hand || null;
+  const bet = Math.max(10, Number(game.bet || 100));
+  const playing = hand?.status === "playing";
+  return shell(`
+    <main class="blackjack-view">
+      <section class="blackjack-table ${playing ? "playing" : ""}">
+        <div class="section-title">
+          <div>
+            <h1>21点</h1>
+            <p>玩家对庄，服务器发牌结算</p>
+          </div>
+          <button class="ghost" data-action="lobby">返回大厅</button>
+        </div>
+        <div class="blackjack-felt">
+          <div class="blackjack-hand dealer">
+            <div class="blackjack-hand-head">
+              <strong>庄家</strong>
+              <span>${escapeHtml(hand?.dealerLabel || "等待发牌")}</span>
+            </div>
+            <div class="blackjack-cards">
+              ${blackjackCardsHtml(hand?.dealerCards || [])}
+            </div>
+          </div>
+          <div class="blackjack-status ${blackjackResultClass(hand)}">
+            ${blackjackStatusHtml(hand)}
+          </div>
+          <div class="blackjack-hand player">
+            <div class="blackjack-hand-head">
+              <strong>${escapeHtml(state.user?.username || "玩家")}</strong>
+              <span>${escapeHtml(hand?.playerLabel || "等待发牌")}</span>
+            </div>
+            <div class="blackjack-cards">
+              ${blackjackCardsHtml(hand?.playerCards || [])}
+            </div>
+          </div>
+        </div>
+        <div class="blackjack-panel">
+          ${playing ? blackjackActionsHtml(hand) : blackjackDealFormHtml(bet, Boolean(hand))}
+        </div>
+      </section>
+      <aside class="blackjack-side">
+        <section class="blackjack-card">
+          <h2>赔率</h2>
+          <div class="blackjack-rules">
+            <p><span>Blackjack</span><b>3:2</b></p>
+            <p><span>普通胜</span><b>1:1</b></p>
+            <p><span>平局</span><b>退回本金</b></p>
+            <p><span>庄家</span><b>17 点停牌</b></p>
+          </div>
+        </section>
+        <section class="blackjack-card">
+          <h2>最近记录</h2>
+          <div class="blackjack-history">${blackjackHistoryHtml(game.history || [])}</div>
+        </section>
+      </aside>
+    </main>
+  `);
+}
+
+function blackjackCardsHtml(cards) {
+  if (!cards.length) {
+    return `<div class="blackjack-empty-card">${cardHtml(null)}</div><div class="blackjack-empty-card">${cardHtml(null)}</div>`;
+  }
+  return cards.map((card) => cardHtml(card)).join("");
+}
+
+function blackjackStatusHtml(hand) {
+  if (!hand) return `<strong>等待下注</strong><span>选择筹码后发牌</span>`;
+  if (hand.status === "playing") {
+    return `<strong>下注 ${money(hand.bet || 0)}</strong><span>可要牌、停牌或前两张加倍</span>`;
+  }
+  const result = hand.result || {};
+  const profit = Number(result.profit || 0);
+  const text = profit > 0 ? `净赢 ${money(profit)}` : profit === 0 ? "保本" : `亏损 ${money(Math.abs(profit))}`;
+  return `<strong>${escapeHtml(result.title || "结算")}</strong><span>${text} · 派彩 ${money(result.payout || 0)}</span>`;
+}
+
+function blackjackResultClass(hand) {
+  const outcome = hand?.result?.outcome || (hand?.status === "playing" ? "playing" : "idle");
+  return String(outcome).replace(/[^\w-]/g, "");
+}
+
+function blackjackActionsHtml(hand) {
+  const actions = hand?.actions || {};
+  return `
+    <div class="blackjack-actions">
+      <button class="primary" data-blackjack-action="hit" ${actions.canHit ? "" : "disabled"}>要牌</button>
+      <button class="success" data-blackjack-action="stand" ${actions.canStand ? "" : "disabled"}>停牌</button>
+      <button class="ghost" data-blackjack-action="double" ${actions.canDouble ? "" : "disabled"}>加倍 ${money(hand.bet || 0)}</button>
+    </div>
+  `;
+}
+
+function blackjackDealFormHtml(bet, hasHand) {
+  return `
+    <form class="blackjack-deal" data-form="blackjack-deal">
+      <label>
+        <span>下注筹码</span>
+        <input name="bet" data-blackjack-bet-input type="number" min="10" step="10" value="${escapeAttr(bet)}" />
+      </label>
+      <div class="blackjack-bets">
+        ${BLACKJACK_BET_PRESETS.map((value) => `<button class="ghost slim" type="button" data-blackjack-bet="${value}">${money(value)}</button>`).join("")}
+      </div>
+      <button class="primary" type="submit" ${bet > Number(state.user?.chips || 0) ? "disabled" : ""}>${hasHand ? "再来一局" : "发牌"}</button>
+    </form>
+  `;
+}
+
+function blackjackHistoryHtml(history) {
+  if (!history.length) return `<p class="slot-empty">暂无记录</p>`;
+  return history.map((entry) => {
+    const profit = Number(entry.profit || 0);
+    return `
+      <article class="blackjack-history-row ${escapeAttr(entry.outcome || "lose")}">
+        <strong>${escapeHtml(entry.title || "结算")}</strong>
+        <span>${escapeHtml(entry.playerLabel || "")} / 庄 ${escapeHtml(entry.dealerLabel || "")}</span>
+        <b>${profit >= 0 ? "+" : "-"}${money(Math.abs(profit))}</b>
+      </article>
+    `;
+  }).join("");
 }
 
 function tableView() {
@@ -2000,6 +2177,8 @@ function render() {
     }
   } else if (state.view === "slots") {
     $app.innerHTML = slotsView();
+  } else if (state.view === "blackjack") {
+    $app.innerHTML = blackjackView();
   } else if (state.view === "admin") {
     $app.innerHTML = adminView();
   } else {
@@ -2652,6 +2831,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "audio-settings") saveAudioSettings(form);
   if (form.dataset.form === "chat-message") submitChatMessage(form);
   if (form.dataset.form === "slot-spin") spinSlots(form);
+  if (form.dataset.form === "blackjack-deal") dealBlackjack(form);
 });
 
 document.addEventListener("pointerdown", (event) => {
@@ -2732,6 +2912,18 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+  if (target.dataset.blackjackBet) {
+    const input = document.querySelector("[data-blackjack-bet-input]");
+    if (input) input.value = target.dataset.blackjackBet;
+    state.blackjack.bet = Number(target.dataset.blackjackBet);
+    return;
+  }
+
+  if (target.dataset.blackjackAction) {
+    await blackjackAction(target.dataset.blackjackAction);
+    return;
+  }
+
   if (target.dataset.raisePreset) {
     setRaiseAmount(Number(target.dataset.raisePreset));
     return;
@@ -2765,6 +2957,7 @@ document.addEventListener("click", async (event) => {
   }
   if (action === "refresh-lobby") await loadLobby();
   if (action === "slots") await openSlots();
+  if (action === "blackjack") await openBlackjack();
   if (action === "admin") await loadAdmin();
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();

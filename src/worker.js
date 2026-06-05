@@ -29,6 +29,9 @@ const RANK_VALUE = Object.fromEntries(RANKS.map((rank, index) => [rank, index + 
 const SLOT_HISTORY_LIMIT = 120;
 const SLOT_MIN_BET = 10;
 const SLOT_MAX_BET = 100000;
+const BLACKJACK_HISTORY_LIMIT = 80;
+const BLACKJACK_MIN_BET = 10;
+const BLACKJACK_MAX_BET = 100000;
 const SLOT_SYMBOLS = [
   { id: "cherry", label: "樱桃", weight: 22, triple: 5, pair: 1 },
   { id: "lemon", label: "柠檬", weight: 21, triple: 5, pair: 1 },
@@ -63,6 +66,9 @@ function defaultDb() {
     sessions: {},
     tables: {},
     slotHistory: [],
+    blackjackHands: {},
+    blackjackHistory: [],
+    blackjackReceipts: {},
     audit: []
   };
 }
@@ -82,6 +88,9 @@ function normalizeDb(db) {
   db.sessions = db.sessions || {};
   db.tables = db.tables || {};
   db.slotHistory = Array.isArray(db.slotHistory) ? db.slotHistory.slice(0, SLOT_HISTORY_LIMIT) : [];
+  db.blackjackHands = db.blackjackHands || {};
+  db.blackjackHistory = Array.isArray(db.blackjackHistory) ? db.blackjackHistory.slice(0, BLACKJACK_HISTORY_LIMIT) : [];
+  db.blackjackReceipts = db.blackjackReceipts || {};
   db.audit = db.audit || [];
   db.quickMessages = normalizeQuickMessages(db.quickMessages);
   db.audioSettings = normalizeAudioSettings(db.audioSettings);
@@ -1245,6 +1254,260 @@ function spinSlots(db, user, body) {
   };
 }
 
+function blackjackHistoryForUser(db, userId) {
+  return (db.blackjackHistory || [])
+    .filter((entry) => entry.userId === userId)
+    .slice(0, 18);
+}
+
+function blackjackPayload(db, user) {
+  return {
+    user: userPublic(user),
+    minBet: BLACKJACK_MIN_BET,
+    maxBet: BLACKJACK_MAX_BET,
+    hand: publicBlackjackHand(db.blackjackHands?.[user.id] || null),
+    history: blackjackHistoryForUser(db, user.id)
+  };
+}
+
+function blackjackCommandKey(user, body, action) {
+  const raw = String(body.commandId || "").trim();
+  if (!raw || raw.length > 120) return "";
+  return `blackjack:${action}:${user.id}:${raw}`;
+}
+
+function rememberBlackjackCommand(db, key, payload) {
+  if (!key) return;
+  db.blackjackReceipts = db.blackjackReceipts || {};
+  db.blackjackReceipts[key] = { at: nowIso(), payload };
+  const entries = Object.entries(db.blackjackReceipts)
+    .sort((a, b) => new Date(b[1].at) - new Date(a[1].at))
+    .slice(0, 160);
+  db.blackjackReceipts = Object.fromEntries(entries);
+}
+
+function withBlackjackReceipt(db, user, body, action, mutator) {
+  const key = blackjackCommandKey(user, body, action);
+  const receipt = key ? db.blackjackReceipts?.[key] : null;
+  if (receipt?.payload) return receipt.payload;
+  const payload = mutator();
+  rememberBlackjackCommand(db, key, payload);
+  return payload;
+}
+
+function blackjackCardScore(card) {
+  const rank = card?.[0];
+  if (rank === "A") return 11;
+  if (["T", "J", "Q", "K"].includes(rank)) return 10;
+  return clampInt(rank, 0, 10);
+}
+
+function blackjackScore(cards = []) {
+  let total = 0;
+  let aces = 0;
+  for (const card of cards) {
+    if (!card) continue;
+    total += blackjackCardScore(card);
+    if (card[0] === "A") aces += 1;
+  }
+  while (total > 21 && aces > 0) {
+    total -= 10;
+    aces -= 1;
+  }
+  const soft = aces > 0 && total <= 21;
+  return {
+    total,
+    soft,
+    busted: total > 21,
+    blackjack: cards.length === 2 && total === 21
+  };
+}
+
+function blackjackScoreLabel(cards = []) {
+  const score = blackjackScore(cards);
+  if (score.blackjack) return "Blackjack";
+  if (score.busted) return `爆牌 ${score.total}`;
+  return `${score.soft ? "软 " : ""}${score.total} 点`;
+}
+
+function publicBlackjackHand(hand) {
+  if (!hand) return null;
+  const settled = hand.status === "settled";
+  const dealerCards = settled
+    ? hand.dealerCards || []
+    : (hand.dealerCards || []).map((card, index) => (index === 0 ? card : null));
+  const playerScore = blackjackScore(hand.playerCards || []);
+  const dealerScore = settled ? blackjackScore(hand.dealerCards || []) : blackjackScore((hand.dealerCards || []).slice(0, 1));
+  return {
+    id: hand.id,
+    status: hand.status,
+    bet: hand.bet,
+    playerCards: hand.playerCards || [],
+    dealerCards,
+    playerScore,
+    dealerScore,
+    playerLabel: blackjackScoreLabel(hand.playerCards || []),
+    dealerLabel: settled ? blackjackScoreLabel(hand.dealerCards || []) : "暗牌",
+    result: hand.result || null,
+    actions: {
+      canHit: hand.status === "playing",
+      canStand: hand.status === "playing",
+      canDouble: hand.status === "playing" && (hand.playerCards || []).length === 2 && !hand.doubled
+    },
+    createdAt: hand.createdAt,
+    updatedAt: hand.updatedAt
+  };
+}
+
+function startBlackjackHand(db, user, body) {
+  const existing = db.blackjackHands?.[user.id];
+  if (existing?.status === "playing") throw new HttpError(409, "当前 21 点牌局还没有结束");
+
+  const bet = clampInt(body.bet, BLACKJACK_MIN_BET, BLACKJACK_MAX_BET);
+  if (bet > user.chips) throw new HttpError(400, "钱包筹码不足");
+
+  const deck = makeDeck();
+  const hand = {
+    id: randomId(8),
+    userId: user.id,
+    username: user.username,
+    bet,
+    deck,
+    playerCards: [deck.pop(), deck.pop()],
+    dealerCards: [deck.pop(), deck.pop()],
+    status: "playing",
+    doubled: false,
+    result: null,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+
+  user.chips -= bet;
+  touchUser(user);
+  db.blackjackHands[user.id] = hand;
+
+  const player = blackjackScore(hand.playerCards);
+  const dealer = blackjackScore(hand.dealerCards);
+  if (player.blackjack || dealer.blackjack) {
+    settleBlackjackHand(db, user, hand, { immediateBlackjack: true });
+  }
+
+  return blackjackPayload(db, user);
+}
+
+function requireActiveBlackjackHand(db, user) {
+  const hand = db.blackjackHands?.[user.id];
+  if (!hand || hand.status !== "playing") throw new HttpError(400, "当前没有进行中的 21 点牌局");
+  return hand;
+}
+
+function hitBlackjackHand(db, user) {
+  const hand = requireActiveBlackjackHand(db, user);
+  hand.playerCards.push(hand.deck.pop());
+  hand.updatedAt = nowIso();
+  const score = blackjackScore(hand.playerCards);
+  if (score.busted || score.total === 21) settleBlackjackHand(db, user, hand);
+  return blackjackPayload(db, user);
+}
+
+function standBlackjackHand(db, user) {
+  const hand = requireActiveBlackjackHand(db, user);
+  settleBlackjackHand(db, user, hand);
+  return blackjackPayload(db, user);
+}
+
+function doubleBlackjackHand(db, user) {
+  const hand = requireActiveBlackjackHand(db, user);
+  if (hand.doubled || hand.playerCards.length !== 2) throw new HttpError(400, "只有前两张牌时可以加倍");
+  if (user.chips < hand.bet) throw new HttpError(400, "钱包筹码不足，无法加倍");
+  user.chips -= hand.bet;
+  hand.bet *= 2;
+  hand.doubled = true;
+  hand.playerCards.push(hand.deck.pop());
+  hand.updatedAt = nowIso();
+  touchUser(user);
+  settleBlackjackHand(db, user, hand);
+  return blackjackPayload(db, user);
+}
+
+function playDealerBlackjack(hand) {
+  while (blackjackScore(hand.dealerCards).total < 17) {
+    hand.dealerCards.push(hand.deck.pop());
+  }
+}
+
+function settleBlackjackHand(db, user, hand) {
+  if (hand.status === "settled") return hand;
+  const playerScore = blackjackScore(hand.playerCards);
+  if (!playerScore.busted && !playerScore.blackjack) playDealerBlackjack(hand);
+  const dealerScore = blackjackScore(hand.dealerCards);
+
+  let payout = 0;
+  let outcome = "lose";
+  let title = "庄家胜";
+
+  if (playerScore.busted) {
+    title = "玩家爆牌";
+  } else if (playerScore.blackjack && dealerScore.blackjack) {
+    payout = hand.bet;
+    outcome = "push";
+    title = "双方 Blackjack";
+  } else if (playerScore.blackjack) {
+    payout = Math.floor(hand.bet * 2.5);
+    outcome = "blackjack";
+    title = "Blackjack";
+  } else if (dealerScore.busted) {
+    payout = hand.bet * 2;
+    outcome = "win";
+    title = "庄家爆牌";
+  } else if (dealerScore.blackjack) {
+    title = "庄家 Blackjack";
+  } else if (playerScore.total > dealerScore.total) {
+    payout = hand.bet * 2;
+    outcome = "win";
+    title = "玩家胜";
+  } else if (playerScore.total === dealerScore.total) {
+    payout = hand.bet;
+    outcome = "push";
+    title = "平局退回";
+  }
+
+  user.chips += payout;
+  touchUser(user);
+  hand.status = "settled";
+  hand.updatedAt = nowIso();
+  hand.result = {
+    title,
+    outcome,
+    bet: hand.bet,
+    payout,
+    profit: payout - hand.bet,
+    playerTotal: playerScore.total,
+    dealerTotal: dealerScore.total,
+    playerLabel: blackjackScoreLabel(hand.playerCards),
+    dealerLabel: blackjackScoreLabel(hand.dealerCards)
+  };
+
+  const entry = {
+    id: hand.id,
+    at: hand.updatedAt,
+    userId: user.id,
+    username: user.username,
+    bet: hand.bet,
+    payout,
+    profit: payout - hand.bet,
+    outcome,
+    title,
+    playerCards: [...hand.playerCards],
+    dealerCards: [...hand.dealerCards],
+    playerLabel: hand.result.playerLabel,
+    dealerLabel: hand.result.dealerLabel
+  };
+  db.blackjackHistory.unshift(entry);
+  db.blackjackHistory = db.blackjackHistory.slice(0, BLACKJACK_HISTORY_LIMIT);
+  return hand;
+}
+
 function createTable(owner, body) {
   const smallBlind = clampInt(body.smallBlind || 10, 1, 10000);
   const bigBlind = clampInt(body.bigBlind || smallBlind * 2, smallBlind + 1, 20000);
@@ -1467,6 +1730,8 @@ function deleteUserAccount(db, admin, user) {
     if (session.userId === user.id) delete db.sessions[token];
   }
   db.slotHistory = (db.slotHistory || []).filter((entry) => entry.userId !== user.id);
+  db.blackjackHistory = (db.blackjackHistory || []).filter((entry) => entry.userId !== user.id);
+  if (db.blackjackHands) delete db.blackjackHands[user.id];
   delete db.users[user.id];
 }
 
@@ -1934,6 +2199,29 @@ async function handleApiRequest(request, store, env = {}) {
         const result = await withDb((db) => {
           const user = requireUser(db, event);
           return spinSlots(db, user, body);
+        });
+        return json(200, result);
+      }
+    }
+
+    if (segments[0] === "blackjack") {
+      if (method === "GET" && segments.length === 1) {
+        const db = await readDb();
+        const user = requireUser(db, event, { refreshSession: false });
+        return json(200, blackjackPayload(db, user));
+      }
+
+      const blackjackActions = new Set(["deal", "hit", "stand", "double"]);
+      if (method === "POST" && blackjackActions.has(segments[1])) {
+        const action = segments[1];
+        const result = await withDb((db) => {
+          const user = requireUser(db, event);
+          return withBlackjackReceipt(db, user, body, action, () => {
+            if (action === "deal") return startBlackjackHand(db, user, body);
+            if (action === "hit") return hitBlackjackHand(db, user);
+            if (action === "stand") return standBlackjackHand(db, user);
+            return doubleBlackjackHand(db, user);
+          });
         });
         return json(200, result);
       }
