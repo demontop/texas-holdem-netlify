@@ -1235,7 +1235,7 @@ function slotReelHtml(symbolId, index, spinMode = "") {
   const endStep = track.length - 1;
   return `
     <div class="slot-reel reel-${index + 1}">
-      <div class="slot-reel-track${modeClass}" style="--slot-track-end: -${endStep};">
+      <div class="slot-reel-track${modeClass}" style="--slot-track-end: -${endStep}; --slot-track-steps: ${endStep};">
         ${track.map((item) => slotSymbolHtml(item)).join("")}
       </div>
     </div>

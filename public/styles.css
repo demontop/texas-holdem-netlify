@@ -422,10 +422,11 @@ h2 {
   display: grid;
   grid-auto-rows: var(--slot-reel-row);
   transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
+  will-change: transform;
 }
 
 .slot-reel-track.rolling {
-  animation: slotRoll 3.6s cubic-bezier(0.12, 0.78, 0.18, 1) 1 both;
+  animation: slotRoll 3.6s steps(var(--slot-track-steps, 42), end) 1 both;
 }
 
 .reel-2 .slot-reel-track.rolling {
@@ -446,7 +447,8 @@ h2 {
 .slot-reel .slot-symbol {
   width: 100%;
   height: 100%;
-  padding: clamp(4px, 0.8vw, 8px);
+  overflow: hidden;
+  padding: 0;
 }
 
 .slot-symbol img {
@@ -455,6 +457,11 @@ h2 {
   height: 100%;
   border-radius: 8px;
   object-fit: contain;
+}
+
+.slot-reel .slot-symbol img {
+  width: min(82%, 148px);
+  height: min(82%, 148px);
 }
 
 .slot-result {
