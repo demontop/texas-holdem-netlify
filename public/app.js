@@ -55,6 +55,7 @@ const SLOT_REEL_STRIPS = [
   ["bar", "diamond", "lemon", "seven", "cherry", "bell", "horseshoe", "coin", "crown", "clover", "diamond", "bar", "lemon", "seven", "coin", "bell", "crown", "cherry", "horseshoe", "clover"]
 ];
 const BLACKJACK_BET_PRESETS = [50, 100, 500, 1000];
+const BLACKJACK_SEAT_OPTIONS = [3, 5, 7];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -64,7 +65,7 @@ const state = {
   tables: [],
   table: null,
   slot: { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 },
-  blackjack: { hand: null, history: [], bet: 100 },
+  blackjack: { tables: [], table: null, history: [], bet: 100, buyIn: 2000, maxSeats: 5 },
   view: "auth",
   authMode: "login",
   message: "",
@@ -341,8 +342,13 @@ function applyServerPayload(payload) {
   }
   if (payload.table) {
     syncServerClock(payload.table.serverTime);
-    state.table = payload.table;
-    if (state.view !== "table") state.view = "table";
+    if (payload.table.type === "blackjack") {
+      state.blackjack = { ...state.blackjack, table: payload.table };
+      if (state.view !== "blackjack") state.view = "blackjack";
+    } else {
+      state.table = payload.table;
+      if (state.view !== "table") state.view = "table";
+    }
     changed = true;
   }
   return changed;
@@ -440,7 +446,7 @@ function logout() {
   state.tables = [];
   state.table = null;
   state.slot = { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 };
-  state.blackjack = { hand: null, history: [], bet: 100 };
+  state.blackjack = { tables: [], table: null, history: [], bet: 100, buyIn: 2000, maxSeats: 5 };
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
@@ -556,50 +562,158 @@ async function spinSlots(formElement) {
 async function openBlackjack() {
   await runBusy(async () => {
     const result = await api("/blackjack");
-    state.user = result.user || state.user;
-    state.blackjack = {
-      ...state.blackjack,
-      hand: result.hand || null,
-      history: result.history || [],
-      bet: state.blackjack.bet || 100
-    };
+    applyBlackjackLobbyPayload(result);
     state.table = null;
     state.view = "blackjack";
-    stopPolling();
+    startPolling(result.table ? 120 : 700);
   });
 }
 
-async function dealBlackjack(formElement) {
+function applyBlackjackLobbyPayload(result) {
+  state.user = result.user || state.user;
+  syncServerClock(result.table?.serverTime || result.serverTime);
+  state.blackjack = {
+    ...state.blackjack,
+    tables: result.tables || state.blackjack.tables || [],
+    table: result.table || null,
+    history: result.history || state.blackjack.history || [],
+    bet: state.blackjack.bet || result.table?.defaultBet || 100,
+    buyIn: state.blackjack.buyIn || 2000,
+    maxSeats: state.blackjack.maxSeats || 5
+  };
+}
+
+function applyBlackjackTablePayload(result) {
+  state.user = result.user || state.user;
+  syncServerClock(result.table?.serverTime || result.serverTime);
+  state.blackjack = {
+    ...state.blackjack,
+    table: result.table || null,
+    tables: result.tables || state.blackjack.tables || [],
+    history: result.history || state.blackjack.history || []
+  };
+  state.view = "blackjack";
+}
+
+async function createBlackjackTable(formElement) {
   const form = new FormData(formElement);
   const bet = Math.max(10, Number(form.get("bet") || state.blackjack.bet || 100));
+  const buyIn = Math.max(bet, Number(form.get("buyIn") || state.blackjack.buyIn || bet * 20));
+  const maxSeats = Number(form.get("maxSeats") || state.blackjack.maxSeats || 5);
+  state.blackjack = { ...state.blackjack, bet, buyIn, maxSeats };
+  await runBusy(async () => {
+    const result = await api("/blackjack/tables", {
+      method: "POST",
+      body: {
+        name: form.get("name"),
+        bet,
+        buyIn,
+        maxSeats,
+        commandId: nextCommandId("blackjack-create")
+      }
+    });
+    applyBlackjackTablePayload(result);
+    startPolling(120);
+  });
+}
+
+async function openBlackjackTable(tableId) {
+  await runBusy(async () => {
+    const result = await api(`/blackjack/tables/${tableId}`);
+    applyBlackjackTablePayload(result);
+    startPolling(120);
+  });
+}
+
+async function joinBlackjackTable(tableId, seat = null) {
+  const buyInInput = document.querySelector("[data-blackjack-buyin]");
+  const buyIn = Number(buyInInput?.value || state.blackjack.buyIn || 2000);
+  state.blackjack = { ...state.blackjack, buyIn };
+  await runBusy(async () => {
+    const result = await api(`/blackjack/tables/${tableId}/join`, {
+      method: "POST",
+      body: { buyIn, seat, commandId: nextCommandId("blackjack-join"), tableRevision: state.blackjack.table?.revision || 0 }
+    });
+    applyBlackjackTablePayload(result);
+    startPolling(120);
+  });
+}
+
+async function leaveBlackjackTable() {
+  const table = state.blackjack.table;
+  if (!table) return;
+  const activeHand = table.controls?.activeHand;
+  const message = activeHand ? "本轮进行中离桌会放弃当前下注，确定离开吗？" : "确定离开当前 21 点桌吗？";
+  if (!window.confirm(message)) return;
+  await runBusy(async () => {
+    const result = await api(`/blackjack/tables/${table.id}/leave`, {
+      method: "POST",
+      body: { commandId: nextCommandId("blackjack-leave"), tableRevision: table.revision || 0 }
+    });
+    applyBlackjackTablePayload(result);
+    state.blackjack.table = null;
+    await loadBlackjackLobby(true);
+    startPolling(700);
+  });
+}
+
+async function disbandBlackjackTable() {
+  const table = state.blackjack.table;
+  if (!table) return;
+  if (!window.confirm("确定解散这张 21 点桌吗？桌上玩家的剩余筹码会退回钱包。")) return;
+  await runBusy(async () => {
+    const result = await api(`/blackjack/tables/${table.id}/disband`, {
+      method: "POST",
+      body: { commandId: nextCommandId("blackjack-disband"), tableRevision: table.revision || 0 }
+    });
+    applyBlackjackTablePayload(result);
+    state.blackjack.table = null;
+    startPolling(700);
+  });
+}
+
+async function loadBlackjackLobby(silent = false) {
+  try {
+    const result = await api("/blackjack");
+    applyBlackjackLobbyPayload({ ...result, table: null });
+    state.view = "blackjack";
+    if (!silent) render();
+  } catch (error) {
+    if (!silent) setMessage(error.message);
+  }
+}
+
+async function startBlackjackRound(formElement = null) {
+  const table = state.blackjack.table;
+  if (!table) return;
+  const form = formElement ? new FormData(formElement) : null;
+  const bet = Math.max(10, Number(form?.get("bet") || state.blackjack.bet || table.defaultBet || 100));
   state.blackjack = { ...state.blackjack, bet };
   await runBusy(async () => {
-    const result = await api("/blackjack/deal", {
+    const result = await api(`/blackjack/tables/${table.id}/start`, {
       method: "POST",
-      body: { bet, commandId: nextCommandId("blackjack-deal") }
+      body: { bet, commandId: nextCommandId("blackjack-start"), tableRevision: table.revision || 0 }
     });
-    applyBlackjackPayload(result);
+    applyBlackjackTablePayload(result);
+    nudgePolling();
   });
 }
 
 async function blackjackAction(action) {
+  const table = state.blackjack.table;
+  if (!table) return;
   await runBusy(async () => {
-    const result = await api(`/blackjack/${action}`, {
+    const result = await api(`/blackjack/tables/${table.id}/action`, {
       method: "POST",
-      body: { commandId: nextCommandId(`blackjack-${action}`) }
+      body: {
+        action,
+        commandId: nextCommandId(`blackjack-${action}`),
+        tableRevision: table.revision || 0
+      }
     });
-    applyBlackjackPayload(result);
+    applyBlackjackTablePayload(result);
+    nudgePolling();
   });
-}
-
-function applyBlackjackPayload(result) {
-  state.user = result.user || state.user;
-  state.blackjack = {
-    ...state.blackjack,
-    hand: result.hand || null,
-    history: result.history || []
-  };
-  state.view = "blackjack";
 }
 
 function sleep(ms) {
@@ -790,8 +904,37 @@ async function refreshTable(silent = true) {
   }
 }
 
+async function refreshBlackjackTable(silent = true) {
+  const table = state.blackjack.table;
+  if (!table) return false;
+  if (state.busy) return false;
+  const requestSeq = ++state.tableRequestSeq;
+  const tableId = table.id;
+  const since = Number(table.revision || 0);
+  try {
+    const result = await api(`/blackjack/tables/${tableId}?since=${encodeURIComponent(since)}`);
+    if (requestSeq !== state.tableRequestSeq || !state.blackjack.table || state.blackjack.table.id !== tableId) return false;
+    syncServerClock(result.table?.serverTime || result.serverTime);
+    if (result.unchanged || !result.table) {
+      if (result.user) state.user = result.user;
+      return false;
+    }
+    const changed = Number(result.table.revision || 0) !== Number(state.blackjack.table.revision || 0)
+      || Number(result.user?.revision || 0) !== Number(state.user?.revision || 0);
+    if (result.user) state.user = result.user;
+    if (result.table) state.blackjack = { ...state.blackjack, table: result.table };
+    if (changed && !silent) render();
+    return changed;
+  } catch (error) {
+    const applied = applyServerPayload(error.payload);
+    if (applied && !silent) render();
+    if (!silent) setMessage(error.message);
+    return applied;
+  }
+}
+
 function startPolling(delay = 120) {
-  if (!state.token || !["table", "lobby"].includes(state.view)) {
+  if (!state.token || !["table", "lobby", "blackjack"].includes(state.view)) {
     stopPolling();
     return;
   }
@@ -814,6 +957,12 @@ async function runPoll() {
     if (!state.busy && state.view === "table" && state.table) {
       const changed = await refreshTable();
       if (changed) render();
+    } else if (!state.busy && state.view === "blackjack" && state.blackjack.table) {
+      const changed = await refreshBlackjackTable();
+      if (changed) render();
+    } else if (!state.busy && state.view === "blackjack") {
+      await loadBlackjackLobby(true);
+      render();
     } else if (!state.busy && state.view === "lobby") {
       await loadLobby(true);
       render();
@@ -830,6 +979,12 @@ function pollDelay() {
     if (["preflop", "flop", "turn", "river"].includes(state.table.status)) return 350;
     return 900;
   }
+  if (state.view === "blackjack" && state.blackjack.table) {
+    if (state.blackjack.table.controls?.canAct) return 300;
+    if (state.blackjack.table.status === "playing") return 350;
+    return 950;
+  }
+  if (state.view === "blackjack") return 1800;
   if (state.view === "lobby") return 1800;
   return 3500;
 }
@@ -845,15 +1000,16 @@ function stopPollTimer() {
 }
 
 function syncPollingSubscription() {
-  if (!state.token || !["lobby", "table"].includes(state.view)) {
+  if (!state.token || !["lobby", "table", "blackjack"].includes(state.view)) {
     stopPolling();
     return;
   }
-  if (!state.poller && !state.polling) startPolling(state.view === "table" ? 120 : 700);
+  const fast = state.view === "table" || (state.view === "blackjack" && state.blackjack.table);
+  if (!state.poller && !state.polling) startPolling(fast ? 120 : 700);
 }
 
 function nudgePolling(delay = 80) {
-  if (state.token && ["lobby", "table"].includes(state.view)) startPolling(delay);
+  if (state.token && ["lobby", "table", "blackjack"].includes(state.view)) startPolling(delay);
 }
 
 async function loadAdmin() {
@@ -1366,86 +1522,177 @@ function slotHistoryHtml(history) {
 
 function blackjackView() {
   const game = state.blackjack || {};
-  const hand = game.hand || null;
+  const table = game.table || null;
+  if (!table) return blackjackLobbyView();
+  return blackjackTableView(table);
+}
+
+function blackjackLobbyView() {
+  const game = state.blackjack || {};
+  const tables = (game.tables || []).map(blackjackLobbyTableRowHtml).join("");
   const bet = Math.max(10, Number(game.bet || 100));
-  const playing = hand?.status === "playing";
+  const buyIn = Math.max(bet, Number(game.buyIn || bet * 20));
   return shell(`
-    <main class="game-layout blackjack-layout stage-${hand?.status || "waiting"}">
+    <main class="blackjack-lobby">
+      <section class="lobby-main">
+        <div class="section-title">
+          <div>
+            <h1>21点大厅</h1>
+            <p>多人同桌对庄，服务器统一发牌结算</p>
+          </div>
+          <div class="toolbar-actions">
+            <button class="ghost" data-action="lobby">主大厅</button>
+            <button class="ghost" data-action="blackjack">刷新</button>
+          </div>
+        </div>
+        <label class="buyin-line">
+          <span>默认带入</span>
+          <input data-blackjack-buyin type="number" min="${bet}" step="10" value="${escapeAttr(buyIn)}" />
+        </label>
+        <div class="tables-list blackjack-tables-list">${tables || `<div class="empty-state">暂无 21 点桌</div>`}</div>
+      </section>
+      <aside class="create-panel blackjack-create-panel">
+        <h2>创建 21 点桌</h2>
+        <form data-form="blackjack-create-table" class="stack-form">
+          <label>
+            <span>牌桌名</span>
+            <input name="name" maxlength="28" value="${escapeAttr(state.user?.username || "玩家")} 的21点桌" required />
+          </label>
+          <div class="split">
+            <label>
+              <span>单局下注</span>
+              <input name="bet" data-blackjack-bet-input type="number" min="10" step="10" value="${escapeAttr(bet)}" />
+            </label>
+            <label>
+              <span>带入筹码</span>
+              <input name="buyIn" type="number" min="${bet}" step="10" value="${escapeAttr(buyIn)}" />
+            </label>
+          </div>
+          <div class="blackjack-bets">
+            ${BLACKJACK_BET_PRESETS.map((value) => `<button class="ghost slim" type="button" data-blackjack-bet="${value}">${money(value)}</button>`).join("")}
+          </div>
+          <label>
+            <span>座位</span>
+            <select name="maxSeats">
+              ${BLACKJACK_SEAT_OPTIONS.map((value) => `<option value="${value}" ${Number(game.maxSeats || 5) === value ? "selected" : ""}>${value} 人桌</option>`).join("")}
+            </select>
+          </label>
+          <button class="primary" type="submit">创建并入座</button>
+        </form>
+      </aside>
+    </main>
+  `);
+}
+
+function blackjackLobbyTableRowHtml(table) {
+  return `
+    <article class="table-row" data-blackjack-table-row="${escapeAttr(table.id)}">
+      <div>
+        <h3>${escapeHtml(table.name)}</h3>
+        <p>${blackjackLobbyTableMeta(table)}</p>
+      </div>
+      <div class="row-pot">${chipStackHtml(table.pot || table.defaultBet || 100, true)}</div>
+      <button class="primary slim" data-open-blackjack-table="${escapeAttr(table.id)}">进桌</button>
+    </article>
+  `;
+}
+
+function blackjackLobbyTableMeta(table) {
+  return `${escapeHtml(table.stage || stageLabel(table.status))} · ${table.players}/${table.maxSeats} 人 · 下注 ${money(table.defaultBet || 0)}`;
+}
+
+function blackjackTableView(table) {
+  const seatCount = table.maxSeats || 5;
+  const seats = blackjackSeatEntries(table);
+  const isSeated = table.youSeat != null;
+  const playing = table.status === "playing";
+  return shell(`
+    <main class="game-layout blackjack-layout stage-${table.status || "waiting"}" data-blackjack-table-id="${escapeAttr(table.id)}" data-max-seats="${seatCount}">
       <div class="casino-room" aria-hidden="true">
         <span class="room-column column-left"></span>
         <span class="room-column column-right"></span>
       </div>
       <section class="table-toolbar">
-        <button class="ghost" data-action="back-lobby">大厅</button>
+        <button class="ghost" data-action="blackjack-lobby">21点大厅</button>
         <div class="table-title">
-          <strong>21点</strong>
+          <strong>${escapeHtml(table.name)}</strong>
           <span class="table-subline">
-            <span>玩家对庄 · 服务器发牌结算</span>
+            <span>${blackjackTableMetaText(table)}</span>
             ${pingBadgeHtml()}
           </span>
         </div>
         <div class="toolbar-actions">
+          <button class="ghost slim bgm-toggle ${state.bgmEnabled ? "active" : ""}" data-action="toggle-bgm">${state.bgmEnabled ? "音乐开" : "静音"}</button>
           <button class="ghost slim rules-toggle ${state.rulesOpen ? "active" : ""}" data-action="toggle-rules" aria-expanded="${state.rulesOpen ? "true" : "false"}">规则</button>
           <button class="ghost slim" data-action="blackjack">刷新</button>
+          <button class="ghost slim" data-action="blackjack-leave" ${table.controls?.canLeave ? "" : "disabled"}>${playing ? "放弃离桌" : "离桌"}</button>
+          <button class="danger slim" data-action="blackjack-disband" ${table.controls?.canDisband ? "" : "disabled"}>解散桌子</button>
         </div>
       </section>
       <section class="poker-room blackjack-room">
-        <div class="felt-table blackjack-felt-table ${playing ? "playing" : ""}">
+        <div class="felt-table blackjack-felt-table blackjack-seats-${seatCount} ${playing ? "playing" : ""}">
           <div class="rail"></div>
           <div class="blackjack-table-mark" aria-hidden="true">
             <strong>BLACKJACK</strong>
             <span>Dealer stands on 17</span>
           </div>
-          <div class="blackjack-seat blackjack-dealer">
-            <div class="avatar-ring dealer-avatar" style="--avatar-hue:42;--turn-progress:1">
-              <div class="avatar-face">
-                <span>D</span>
-              </div>
-            </div>
-            <div class="blackjack-seat-info">
-              <strong>庄家</strong>
-              <span>${escapeHtml(hand?.dealerLabel || "等待发牌")}</span>
-            </div>
-            <div class="blackjack-cards dealer-cards">
-              ${blackjackCardsHtml(hand?.dealerCards || [])}
-            </div>
-          </div>
+          ${blackjackDealerHtml(table)}
           <div class="blackjack-center">
             <div class="blackjack-pot">
-              ${chipStackHtml(hand?.bet || bet)}
-              <span>${hand ? "本局下注" : "准备下注"}</span>
+              ${chipStackHtml(table.pot || table.defaultBet || state.blackjack.bet || 100)}
+              <span>${playing ? "本轮总注" : "单局下注"}</span>
             </div>
-            <div class="blackjack-status ${blackjackResultClass(hand)}">
-              ${blackjackStatusHtml(hand)}
+            <div class="blackjack-status ${blackjackResultClass(table)}">
+              ${blackjackStatusHtml(table)}
             </div>
           </div>
-          <div class="blackjack-seat blackjack-player">
-            <div class="avatar-ring player-avatar" style="--avatar-hue:${avatarHue(state.user?.username)};--turn-progress:1">
-              <div class="avatar-face">
-                <span>${escapeHtml(avatarInitial(state.user?.username))}</span>
-              </div>
-            </div>
-            <div class="blackjack-seat-info">
-              <strong>${escapeHtml(state.user?.username || "玩家")}</strong>
-              <span>${escapeHtml(hand?.playerLabel || "等待发牌")}</span>
-            </div>
-            <div class="blackjack-cards player-cards">
-              ${blackjackCardsHtml(hand?.playerCards || [])}
-            </div>
-            <div class="blackjack-wallet">${chipStackHtml(state.user?.chips || 0, true)}<span>钱包</span></div>
-          </div>
+          ${seats.map((entry) => blackjackSeatHtml(entry, table)).join("")}
         </div>
       </section>
       <aside class="side-panel blackjack-side-panel">
-        ${blackjackControlPanelHtml(hand, bet)}
+        ${isSeated ? blackjackControlPanelHtml(table) : blackjackSitPanelHtml(table)}
         <div class="log-panel blackjack-log-panel">
-          <h2>最近记录</h2>
-          <div class="blackjack-history">${blackjackHistoryHtml(game.history || [])}</div>
+          <h2>牌局记录</h2>
+          <div class="blackjack-history">${blackjackLogsHtml(table)}</div>
         </div>
       </aside>
       ${blackjackRulesPanelHtml()}
+      ${blackjackShowdownOverlayHtml(table)}
     </main>
   `);
+}
+
+function blackjackTableMetaText(table) {
+  return `${escapeHtml(table.stage || blackjackStageLabel(table.status))} · 第 ${table.handNo || 0} 轮 · ${blackjackSeatedPlayersCount(table)}/${table.maxSeats} 人 · ${money(table.defaultBet || 0)}`;
+}
+
+function blackjackStageLabel(status) {
+  return {
+    waiting: "等待入座",
+    playing: "行动中",
+    showdown: "结算"
+  }[status] || status;
+}
+
+function blackjackSeatedPlayersCount(table) {
+  return (table.seats || []).filter(Boolean).length;
+}
+
+function blackjackDealerHtml(table) {
+  return `
+    <div class="blackjack-seat blackjack-dealer">
+      <div class="avatar-ring dealer-avatar" style="--avatar-hue:42;--turn-progress:1">
+        <div class="avatar-face"><span>D</span></div>
+      </div>
+      <div class="blackjack-seat-info">
+        <strong>庄家</strong>
+        <span>${escapeHtml(table.dealerLabel || "等待发牌")}</span>
+      </div>
+      <div class="blackjack-cards dealer-cards">
+        ${blackjackCardsHtml(table.dealerCards || [])}
+      </div>
+    </div>
+  `;
 }
 
 function blackjackCardsHtml(cards) {
@@ -1458,58 +1705,186 @@ function blackjackCardsHtml(cards) {
   return cards.map((card, index) => `<span class="blackjack-card-slot" style="--i:${index}">${cardHtml(card)}</span>`).join("");
 }
 
-function blackjackStatusHtml(hand) {
-  if (!hand) return `<strong>等待下注</strong><span>选择筹码后发牌</span>`;
-  if (hand.status === "playing") {
-    return `<strong>下注 ${money(hand.bet || 0)}</strong><span>可要牌、停牌或前两张加倍</span>`;
+function blackjackStatusHtml(table) {
+  if (table.status === "playing") {
+    const player = (table.seats || [])[table.currentTurnSeat];
+    return `<strong>${player ? `${escapeHtml(player.username)} 行动` : "行动中"}</strong><span>要牌、停牌，前两张可加倍</span>`;
   }
-  const result = hand.result || {};
-  const profit = Number(result.profit || 0);
-  const text = profit > 0 ? `净赢 ${money(profit)}` : profit === 0 ? "保本" : `亏损 ${money(Math.abs(profit))}`;
-  return `<strong>${escapeHtml(result.title || "结算")}</strong><span>${text} · 派彩 ${money(result.payout || 0)}</span>`;
+  if (table.status === "showdown") {
+    const best = (table.results || []).slice().sort((a, b) => Number(b.profit || 0) - Number(a.profit || 0))[0];
+    if (best) return `<strong>${escapeHtml(best.username)} · ${escapeHtml(best.title || "结算")}</strong><span>${best.profit >= 0 ? "+" : ""}${money(best.profit || 0)} · 庄 ${escapeHtml(best.dealerLabel || "")}</span>`;
+    return `<strong>本轮结算</strong><span>等待下一轮发牌</span>`;
+  }
+  return `<strong>等待开局</strong><span>入座后选择下注并开始本轮</span>`;
 }
 
-function blackjackResultClass(hand) {
-  const outcome = hand?.result?.outcome || (hand?.status === "playing" ? "playing" : "idle");
+function blackjackResultClass(table) {
+  const outcome = table.status === "showdown"
+    ? ((table.results || []).some((result) => result.outcome === "blackjack" || result.outcome === "win") ? "win" : "push")
+    : table.status;
   return String(outcome).replace(/[^\w-]/g, "");
 }
 
-function blackjackControlPanelHtml(hand, bet) {
-  const playing = hand?.status === "playing";
+function blackjackSeatEntries(table) {
+  const seatCount = table.maxSeats || 5;
+  const anchor = table.youSeat == null ? 0 : table.youSeat;
+  return Array.from({ length: seatCount }, (_, displaySeat) => {
+    const actualSeat = table.youSeat == null ? displaySeat : (anchor + displaySeat) % seatCount;
+    return {
+      displaySeat,
+      actualSeat,
+      player: table.seats?.[actualSeat] || null
+    };
+  });
+}
+
+function blackjackSeatHtml(entry, table) {
+  const style = blackjackSeatStyle(entry, table);
   return `
-    <div class="control-panel blackjack-control ${playing ? "live" : "ready"}">
-      <div class="action-status">
-        <span class="${playing ? "live-dot" : ""}">${playing ? "轮到你" : "下注区"}</span>
-        <b>${playing ? escapeHtml(hand.playerLabel || "当前手牌") : "选择筹码发牌"}</b>
-      </div>
-      ${playing ? blackjackActionsHtml(hand) : blackjackDealFormHtml(bet, Boolean(hand))}
+    <div class="${blackjackSeatClassName(entry, table)}" data-blackjack-seat="${entry.actualSeat}" data-display-seat="${entry.displaySeat}"${style ? ` style="${style}"` : ""}>
+      ${blackjackSeatContentHtml(entry, table)}
     </div>
   `;
 }
 
-function blackjackActionsHtml(hand) {
-  const actions = hand?.actions || {};
+function blackjackSeatStyle(entry, table) {
+  if (entry.displaySeat === 0) return "";
+  const seatCount = Math.max(3, Number(table.maxSeats || 5));
+  const opponentSlots = Math.max(1, seatCount - 1);
+  const leftCount = Math.ceil(opponentSlots / 2);
+  const leftPath = [
+    [33, 73],
+    [18, 62],
+    [15, 45],
+    [27, 28]
+  ];
+  const rightPath = [
+    [68, 28],
+    [77, 45],
+    [75, 62],
+    [63, 73]
+  ];
+
+  if (entry.displaySeat <= leftCount) {
+    const p = sideSeatProgress(entry.displaySeat - 1, leftCount);
+    const [x, y] = interpolateSeatPath(leftPath, p);
+    return `--bj-seat-left:${x.toFixed(2)}%;--bj-seat-top:${y.toFixed(2)}%`;
+  }
+
+  const rightCount = opponentSlots - leftCount;
+  const rightIndex = entry.displaySeat - leftCount - 1;
+  const p = sideSeatProgress(rightIndex, rightCount);
+  const [x, y] = interpolateSeatPath(rightPath, p);
+  return `--bj-seat-left:${x.toFixed(2)}%;--bj-seat-top:${y.toFixed(2)}%`;
+}
+
+function blackjackSeatClassName(entry, table) {
+  const player = entry.player;
+  const isMe = player && table.youSeat === entry.actualSeat;
+  const isTurn = table.currentTurnSeat === entry.actualSeat && table.status === "playing";
+  const outcome = player?.result?.outcome || "";
+  return ["blackjack-player-seat", `bj-seat-${entry.displaySeat}`, player ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", outcome]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function blackjackSeatContentHtml(entry, table) {
+  const { player, actualSeat } = entry;
+  if (!player) {
+    const canJoin = table.controls?.canJoin;
+    return `
+      <button class="seat-join blackjack-seat-join" ${canJoin ? `data-join-blackjack-seat="${actualSeat}"` : "disabled"}>
+        <span class="avatar">+</span>
+        <strong>空位</strong>
+      </button>
+    `;
+  }
+
+  const isTurn = table.currentTurnSeat === actualSeat && table.status === "playing";
+  const timerText = isTurn ? countdownText(table) : "";
+  const timerStyle = isTurn ? ` style="--turn-progress:${countdownPercent(table)}"` : "";
+  const hasBet = Number(player.bet || 0) > 0;
+  return `
+    <div class="blackjack-seat-player">
+      <span class="turn-pointer" aria-hidden="true">行动</span>
+      <div class="avatar-ring" style="--avatar-hue:${avatarHue(player.username)};--turn-progress:${countdownPercent(table)}">
+        <div class="avatar-face"><span>${escapeHtml(avatarInitial(player.username))}</span></div>
+        ${isTurn ? `<em class="seat-timer" data-seat-timer="${actualSeat}"${timerStyle}>${timerText}</em>` : ""}
+      </div>
+      <div class="blackjack-seat-info">
+        <strong>${escapeHtml(player.username)}${player.isBot ? ` <em class="bot-badge">AI</em>` : ""}</strong>
+        <span>${money(player.stack || 0)}</span>
+      </div>
+      <div class="blackjack-cards player-cards">${blackjackCardsHtml(player.cards || [])}</div>
+      <div class="seat-bet ${hasBet ? "" : "empty"}" ${hasBet ? "" : `aria-hidden="true"`}>${hasBet ? chipStackHtml(player.bet, true) : ""}</div>
+      <div class="status-pill">${escapeHtml(player.scoreLabel || player.lastAction || "等待")}${player.result ? ` · ${player.result.profit >= 0 ? "+" : ""}${money(player.result.profit || 0)}` : ""}</div>
+    </div>
+  `;
+}
+
+function blackjackControlPanelHtml(table) {
+  const playing = table.status === "playing";
+  const controls = table.controls || {};
+  const player = table.youSeat == null ? null : table.seats?.[table.youSeat];
+  const bet = Math.max(10, Number(state.blackjack.bet || table.defaultBet || 100));
+  return `
+    <div class="control-panel blackjack-control ${playing ? "live" : "ready"}">
+      <div class="action-status">
+        <span class="${controls.canAct ? "live-dot" : ""}">${controls.canAct ? "轮到你" : blackjackControlStatusText(table)}</span>
+        <b>${player ? escapeHtml(player.scoreLabel || "等待开局") : "选择座位入桌"}</b>
+        ${table.status === "playing" ? `<strong class="turn-countdown" data-countdown-ring style="--turn-progress:${countdownPercent(table)}"><span data-countdown-label>${countdownText(table)}</span></strong>` : ""}
+      </div>
+      ${playing ? blackjackActionsHtml(table) : blackjackStartRoundFormHtml(table, bet)}
+    </div>
+  `;
+}
+
+function blackjackControlStatusText(table) {
+  if (table.status === "showdown") return "等待下一轮";
+  if (table.status === "waiting") return "准备区";
+  const player = table.seats?.[table.currentTurnSeat];
+  return player ? `${player.username} 行动` : "行动中";
+}
+
+function blackjackActionsHtml(table) {
+  const actions = table.controls || {};
+  const player = table.youSeat == null ? null : table.seats?.[table.youSeat];
   return `
     <div class="action-bottom-bar blackjack-actions">
       <button class="primary action-big" data-blackjack-action="hit" ${actions.canHit ? "" : "disabled"}>要牌</button>
       <button class="success action-big" data-blackjack-action="stand" ${actions.canStand ? "" : "disabled"}>停牌</button>
-      <button class="ghost action-big allin" data-blackjack-action="double" ${actions.canDouble ? "" : "disabled"}>加倍 ${money(hand.bet || 0)}</button>
+      <button class="ghost action-big allin" data-blackjack-action="double" ${actions.canDouble ? "" : "disabled"}>加倍 ${money(player?.bet || table.defaultBet || 0)}</button>
     </div>
   `;
 }
 
-function blackjackDealFormHtml(bet, hasHand) {
+function blackjackStartRoundFormHtml(table, bet) {
   return `
-    <form class="blackjack-deal" data-form="blackjack-deal">
+    <form class="blackjack-deal" data-form="blackjack-start-round">
       <label>
-        <span>下注筹码</span>
+        <span>本轮下注</span>
         <input name="bet" data-blackjack-bet-input type="number" min="10" step="10" value="${escapeAttr(bet)}" />
       </label>
       <div class="blackjack-bets">
         ${BLACKJACK_BET_PRESETS.map((value) => `<button class="ghost slim" type="button" data-blackjack-bet="${value}">${money(value)}</button>`).join("")}
       </div>
-      <button class="primary" type="submit" ${bet > Number(state.user?.chips || 0) ? "disabled" : ""}>${hasHand ? "再来一局" : "发牌"}</button>
+      <button class="primary" type="submit" ${table.controls?.canStart ? "" : "disabled"}>${table.status === "showdown" ? "再来一轮" : "开始本轮"}</button>
     </form>
+  `;
+}
+
+function blackjackSitPanelHtml(table) {
+  const buyIn = Math.max(table.defaultBet || 100, Number(state.blackjack.buyIn || (table.defaultBet || 100) * 20));
+  const disabled = !table.controls?.canJoin;
+  return `
+    <div class="control-panel sit-control blackjack-sit-control">
+      <h2>入座</h2>
+      <label>
+        <span>带入筹码</span>
+        <input data-blackjack-buyin type="number" min="${table.defaultBet || 10}" step="10" value="${escapeAttr(buyIn)}" ${disabled ? "disabled" : ""} />
+      </label>
+      <button class="primary" data-join-blackjack-table="${escapeAttr(table.id)}" ${disabled ? "disabled" : ""}>坐下</button>
+    </div>
   `;
 }
 
@@ -1523,9 +1898,43 @@ function blackjackRulesPanelHtml() {
       <div class="rules-body">
         <p><strong>目标</strong>：手牌点数尽量接近 21 点，但不能超过 21 点。</p>
         <p><strong>点数</strong>：2-10 按牌面计算，J/Q/K 为 10 点，A 可算 1 点或 11 点。</p>
+        <p><strong>多人桌</strong>：同桌玩家使用同一轮下注，按座位顺序依次行动，每人 20 秒。</p>
         <p><strong>操作</strong>：发牌后可以要牌、停牌；前两张牌时可加倍，加倍会追加同额下注并只补一张牌。</p>
-        <p><strong>庄家</strong>：玩家停牌或爆牌后，庄家亮出暗牌并在低于 17 点时继续补牌。</p>
+        <p><strong>庄家</strong>：所有玩家行动结束后，庄家亮出暗牌并在低于 17 点时继续补牌。</p>
         <p><strong>派彩</strong>：Blackjack 为 3:2，普通胜为 1:1，平局退回本金。</p>
+      </div>
+    </section>
+  `;
+}
+
+function blackjackLogsHtml(table) {
+  return (table.logs || []).map((entry) => `<p>${escapeHtml(entry.text)}</p>`).join("") || "<p>等待开局</p>";
+}
+
+function blackjackShowdownOverlayHtml(table) {
+  const results = table.results || [];
+  const visible = table.status === "showdown" && results.length > 0;
+  const rows = results
+    .slice()
+    .sort((a, b) => Number(b.profit || 0) - Number(a.profit || 0))
+    .map((result) => `
+      <article class="showdown-winner ${result.outcome || ""}">
+        <div class="showdown-winner-main">
+          <strong>${escapeHtml(result.username)}</strong>
+          <span>${result.profit >= 0 ? "+" : ""}${money(result.profit || 0)}</span>
+          <em>${escapeHtml(result.title || "")}</em>
+        </div>
+      </article>
+    `).join("");
+  const stackRows = (table.seats || []).filter(Boolean).map((player) => `
+    <span>${escapeHtml(player.username)} <b>${money(player.stack)}</b></span>
+  `).join("");
+  return `
+    <section class="showdown-overlay blackjack-showdown-overlay ${visible ? "visible" : ""}" data-showdown-overlay aria-hidden="${visible ? "false" : "true"}">
+      <div class="showdown-card">
+        <h2>21 点结算</h2>
+        <div class="showdown-winners">${rows || "<p><strong>等待结算</strong></p>"}</div>
+        <div class="showdown-stacks">${stackRows}</div>
       </div>
     </section>
   `;
@@ -1999,6 +2408,12 @@ function actionDeadline(table = state.table) {
   return table?.controls?.actionDeadlineAt || table?.actionDeadlineAt || "";
 }
 
+function countdownTable() {
+  if (state.view === "table") return state.table;
+  if (state.view === "blackjack") return state.blackjack.table;
+  return null;
+}
+
 function remainingActionSeconds(table = state.table) {
   const deadline = new Date(actionDeadline(table)).getTime();
   if (!Number.isFinite(deadline)) return null;
@@ -2218,6 +2633,7 @@ function render() {
   const previousAnimationTable = state.animationTable;
   if (!state.table?.controls?.canAct) state.raiseDrawerOpen = false;
   const nextTableId = state.view === "table" && state.table ? state.table.id : null;
+  const blackjackTable = state.view === "blackjack" ? state.blackjack.table : null;
   const preserveScroll = Boolean(nextTableId && state.renderedTableId === nextTableId);
   const canPatchTable = Boolean(preserveScroll && $app.querySelector(".game-layout"));
   const lockedScroll = state.scrollLock && nextTableId === state.scrollLock.tableId ? state.scrollLock : null;
@@ -2246,13 +2662,13 @@ function render() {
     }
   }
   state.renderedTableId = nextTableId;
-  if (!nextTableId) clearTableEffects();
+  if (!nextTableId && !blackjackTable) clearTableEffects();
   if (nextTableId) syncRaiseControls($app);
   syncActionCountdown();
   if (preserveScroll || lockedScroll) restoreScrollPosition(scrollX, scrollY);
   if (lockedScroll) state.scrollLock = null;
   scheduleTableAnimations(previousAnimationTable, state.view === "table" ? state.table : null);
-  syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : null);
+  syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : blackjackTable);
   state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
   syncPollingSubscription();
 }
@@ -2435,8 +2851,9 @@ function hideShowdownOverlay(root = document) {
 }
 
 function syncActionCountdown() {
-  const deadline = actionDeadline();
-  const isActive = state.view === "table" && state.table?.controls?.activeHand && deadline;
+  const table = countdownTable();
+  const deadline = actionDeadline(table);
+  const isActive = Boolean(table?.controls?.activeHand && deadline);
   if (!isActive) {
     stopCountdownTimer();
     state.timeoutPollDeadline = "";
@@ -2455,30 +2872,32 @@ function stopCountdownTimer() {
 }
 
 function updateActionCountdown() {
-  if (state.view !== "table" || !state.table) {
+  const table = countdownTable();
+  if (!table) {
     stopCountdownTimer();
     return;
   }
 
-  const deadline = actionDeadline();
+  const deadline = actionDeadline(table);
   if (!deadline) {
     stopCountdownTimer();
     return;
   }
 
-  const label = countdownText();
-  const progress = countdownPercent();
+  const label = countdownText(table);
+  const progress = countdownPercent(table);
   document.querySelectorAll("[data-countdown-label], [data-seat-timer]").forEach((element) => {
     element.textContent = label;
   });
-  document.querySelectorAll("[data-countdown-ring], .seat.turn .avatar-ring, .seat.turn .seat-timer").forEach((element) => {
+  document.querySelectorAll("[data-countdown-ring], .seat.turn .avatar-ring, .seat.turn .seat-timer, .blackjack-player-seat.turn .avatar-ring").forEach((element) => {
     element.style.setProperty("--turn-progress", String(progress));
-    element.classList.toggle("danger-time", remainingActionSeconds() !== null && remainingActionSeconds() <= 5);
+    element.classList.toggle("danger-time", remainingActionSeconds(table) !== null && remainingActionSeconds(table) <= 5);
   });
 
-  if (remainingActionSeconds() === 0 && state.timeoutPollDeadline !== deadline && !state.busy) {
+  if (remainingActionSeconds(table) === 0 && state.timeoutPollDeadline !== deadline && !state.busy) {
     state.timeoutPollDeadline = deadline;
-    refreshTable(false).then((changed) => {
+    const refresh = state.view === "blackjack" ? refreshBlackjackTable : refreshTable;
+    refresh(false).then((changed) => {
       if (changed) render();
     });
   }
@@ -2743,7 +3162,11 @@ function playAudioAsset(asset) {
   }
 }
 
-function syncBgm(table = state.table) {
+function currentAudioTable() {
+  return state.view === "blackjack" ? state.blackjack.table : state.table;
+}
+
+function syncBgm(table = currentAudioTable()) {
   const bgm = normalizeClientAudioSettings(table?.audioSettings).bgm;
   if (!state.bgmEnabled || !bgm.enabled || !bgm.src) {
     pauseBgm();
@@ -2888,7 +3311,8 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "audio-settings") saveAudioSettings(form);
   if (form.dataset.form === "chat-message") submitChatMessage(form);
   if (form.dataset.form === "slot-spin") spinSlots(form);
-  if (form.dataset.form === "blackjack-deal") dealBlackjack(form);
+  if (form.dataset.form === "blackjack-create-table") createBlackjackTable(form);
+  if (form.dataset.form === "blackjack-start-round") startBlackjackRound(form);
 });
 
 document.addEventListener("pointerdown", (event) => {
@@ -2939,6 +3363,21 @@ document.addEventListener("click", async (event) => {
 
   if (target.dataset.joinTable) {
     await joinTable(target.dataset.joinTable);
+    return;
+  }
+
+  if (target.dataset.openBlackjackTable) {
+    await openBlackjackTable(target.dataset.openBlackjackTable);
+    return;
+  }
+
+  if (target.dataset.joinBlackjackTable) {
+    await joinBlackjackTable(target.dataset.joinBlackjackTable);
+    return;
+  }
+
+  if (target.dataset.joinBlackjackSeat) {
+    await joinBlackjackTable(state.blackjack.table.id, Number(target.dataset.joinBlackjackSeat));
     return;
   }
 
@@ -3015,10 +3454,20 @@ document.addEventListener("click", async (event) => {
   if (action === "refresh-lobby") await loadLobby();
   if (action === "slots") await openSlots();
   if (action === "blackjack") await openBlackjack();
+  if (action === "blackjack-lobby") {
+    state.blackjack.table = null;
+    state.view = "blackjack";
+    state.rulesOpen = false;
+    await loadBlackjackLobby(true);
+    startPolling(700);
+    render();
+  }
   if (action === "admin") await loadAdmin();
   if (action === "start-hand") await startHand();
   if (action === "leave-table") await leaveTable();
   if (action === "disband-table") await disbandTable();
+  if (action === "blackjack-leave") await leaveBlackjackTable();
+  if (action === "blackjack-disband") await disbandBlackjackTable();
   if (action === "toggle-bgm") toggleBgm();
   if (action === "toggle-rules") {
     state.rulesOpen = !state.rulesOpen;

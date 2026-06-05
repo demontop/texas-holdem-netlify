@@ -32,6 +32,9 @@ const SLOT_MAX_BET = 100000;
 const BLACKJACK_HISTORY_LIMIT = 80;
 const BLACKJACK_MIN_BET = 10;
 const BLACKJACK_MAX_BET = 100000;
+const BLACKJACK_TABLE_SEAT_OPTIONS = [3, 5, 7];
+const BLACKJACK_DEFAULT_MAX_SEATS = 5;
+const BLACKJACK_ACTION_TIMEOUT_MS = 20000;
 const SLOT_SYMBOLS = [
   { id: "cherry", label: "樱桃", weight: 22, triple: 5, pair: 1 },
   { id: "lemon", label: "柠檬", weight: 21, triple: 5, pair: 1 },
@@ -66,6 +69,7 @@ function defaultDb() {
     sessions: {},
     tables: {},
     slotHistory: [],
+    blackjackTables: {},
     blackjackHands: {},
     blackjackHistory: [],
     blackjackReceipts: {},
@@ -88,6 +92,7 @@ function normalizeDb(db) {
   db.sessions = db.sessions || {};
   db.tables = db.tables || {};
   db.slotHistory = Array.isArray(db.slotHistory) ? db.slotHistory.slice(0, SLOT_HISTORY_LIMIT) : [];
+  db.blackjackTables = db.blackjackTables || {};
   db.blackjackHands = db.blackjackHands || {};
   db.blackjackHistory = Array.isArray(db.blackjackHistory) ? db.blackjackHistory.slice(0, BLACKJACK_HISTORY_LIMIT) : [];
   db.blackjackReceipts = db.blackjackReceipts || {};
@@ -122,6 +127,41 @@ function normalizeDb(db) {
       if (player && db.users[player.userId]) {
         player.isBot = Boolean(db.users[player.userId].isBot);
       }
+    }
+  }
+  for (const table of Object.values(db.blackjackTables)) {
+    table.type = "blackjack";
+    table.maxSeats = normalizePersistedBlackjackMaxSeats(table);
+    table.seats = Array.isArray(table.seats) ? table.seats : Array.from({ length: table.maxSeats }, () => null);
+    while (table.seats.length < table.maxSeats) table.seats.push(null);
+    table.seats = table.seats.slice(0, table.maxSeats);
+    table.status = ["waiting", "playing", "showdown"].includes(table.status) ? table.status : "waiting";
+    table.deck = Array.isArray(table.deck) ? table.deck : [];
+    table.dealerCards = Array.isArray(table.dealerCards) ? table.dealerCards : [];
+    table.currentTurnSeat = table.currentTurnSeat ?? null;
+    table.defaultBet = clampInt(table.defaultBet || 100, BLACKJACK_MIN_BET, BLACKJACK_MAX_BET);
+    table.minBet = clampInt(table.minBet || BLACKJACK_MIN_BET, BLACKJACK_MIN_BET, BLACKJACK_MAX_BET);
+    table.maxBet = clampInt(table.maxBet || BLACKJACK_MAX_BET, table.minBet, BLACKJACK_MAX_BET);
+    table.pot = Number(table.pot || 0);
+    table.handNo = Number(table.handNo || 0);
+    table.logs = Array.isArray(table.logs) ? table.logs.slice(0, 80) : [];
+    table.chat = Array.isArray(table.chat) ? table.chat.slice(-CHAT_HISTORY_LIMIT) : [];
+    table.quickMessages = normalizeQuickMessages(table.quickMessages || db.quickMessages);
+    table.audioSettings = normalizeAudioSettings(table.audioSettings || db.audioSettings);
+    table.audioEvents = Array.isArray(table.audioEvents) ? table.audioEvents.slice(-AUDIO_EVENT_LIMIT) : [];
+    table.audioSeq = Number(table.audioSeq || 0);
+    table.results = Array.isArray(table.results) ? table.results : [];
+    table.revision = Number(table.revision || 0);
+    table.actionReceipts = table.actionReceipts || {};
+    for (const player of table.seats) {
+      if (!player) continue;
+      player.cards = Array.isArray(player.cards) ? player.cards : [];
+      player.stack = Number(player.stack || 0);
+      player.bet = Number(player.bet || 0);
+      player.seat = Number(player.seat || 0);
+      player.status = player.status || "waiting";
+      player.result = player.result || null;
+      player.isBot = Boolean(db.users[player.userId]?.isBot || player.isBot);
     }
   }
   return db;
@@ -205,6 +245,23 @@ function normalizeMaxSeats(value) {
 function normalizePersistedMaxSeats(table) {
   const current = clampInt(table?.maxSeats || DEFAULT_MAX_SEATS, 2, 10);
   const normalized = normalizeMaxSeats(current);
+  if (normalized >= current) return normalized;
+  const seats = Array.isArray(table?.seats) ? table.seats : [];
+  return seats.slice(normalized).some(Boolean) ? current : normalized;
+}
+
+function normalizeBlackjackMaxSeats(value) {
+  const requested = clampInt(
+    value || BLACKJACK_DEFAULT_MAX_SEATS,
+    BLACKJACK_TABLE_SEAT_OPTIONS[0],
+    BLACKJACK_TABLE_SEAT_OPTIONS[BLACKJACK_TABLE_SEAT_OPTIONS.length - 1]
+  );
+  return BLACKJACK_TABLE_SEAT_OPTIONS.find((option) => option >= requested) || BLACKJACK_TABLE_SEAT_OPTIONS[BLACKJACK_TABLE_SEAT_OPTIONS.length - 1];
+}
+
+function normalizePersistedBlackjackMaxSeats(table) {
+  const current = clampInt(table?.maxSeats || BLACKJACK_DEFAULT_MAX_SEATS, 2, 7);
+  const normalized = normalizeBlackjackMaxSeats(current);
   if (normalized >= current) return normalized;
   const seats = Array.isArray(table?.seats) ? table.seats : [];
   return seats.slice(normalized).some(Boolean) ? current : normalized;
@@ -1065,6 +1122,10 @@ function assertPlayerCanJoinTable(db, table, user) {
   if (existingTable && existingTable.id !== table.id) {
     throw new HttpError(409, `${user.username} 已在「${existingTable.name}」入座，离桌后才能加入其他牌桌`);
   }
+  const existingBlackjackTable = findBlackjackPlayerTable(db, user.id);
+  if (existingBlackjackTable) {
+    throw new HttpError(409, `${user.username} 已在「${existingBlackjackTable.name}」21点桌入座，离桌后才能加入其他牌桌`);
+  }
 }
 
 function requireSeated(table, user) {
@@ -1508,6 +1569,592 @@ function settleBlackjackHand(db, user, hand) {
   return hand;
 }
 
+function blackjackStageName(status) {
+  return {
+    waiting: "等待入座",
+    playing: "行动中",
+    showdown: "结算"
+  }[status] || status;
+}
+
+function blackjackSeatedPlayers(table) {
+  return (table.seats || []).filter(Boolean);
+}
+
+function blackjackRoundPlayers(table) {
+  return blackjackSeatedPlayers(table).filter((player) => (player.cards || []).length > 0);
+}
+
+function blackjackPlayerNeedsAction(player) {
+  return Boolean(player && player.status === "playing" && (player.cards || []).length > 0 && !blackjackScore(player.cards).busted);
+}
+
+function blackjackTableSummary(table) {
+  return {
+    id: table.id,
+    type: "blackjack",
+    name: table.name,
+    status: table.status,
+    stage: blackjackStageName(table.status),
+    players: blackjackSeatedPlayers(table).length,
+    maxSeats: table.maxSeats,
+    defaultBet: table.defaultBet,
+    minBet: table.minBet,
+    maxBet: table.maxBet,
+    pot: table.pot || 0,
+    handNo: table.handNo || 0,
+    revision: table.revision || 0,
+    updatedAt: table.updatedAt
+  };
+}
+
+function findBlackjackPlayerTable(db, userId) {
+  for (const table of Object.values(db.blackjackTables || {})) {
+    const player = table.seats.find((seat) => seat && seat.userId === userId);
+    if (player) return table;
+  }
+  return null;
+}
+
+function assertPlayerCanJoinBlackjackTable(db, table, user) {
+  const pokerTable = findPlayerTable(db, user.id);
+  if (pokerTable) {
+    throw new HttpError(409, `${user.username} 已在「${pokerTable.name}」入座，离桌后才能加入 21 点桌`);
+  }
+  const existingTable = findBlackjackPlayerTable(db, user.id);
+  if (existingTable && existingTable.id !== table.id) {
+    throw new HttpError(409, `${user.username} 已在「${existingTable.name}」入座，离桌后才能加入其他 21 点桌`);
+  }
+}
+
+function getBlackjackTableOrThrow(db, id) {
+  const table = db.blackjackTables?.[id];
+  if (!table) throw new HttpError(404, "21点牌桌不存在");
+  return table;
+}
+
+function requireBlackjackSeated(table, user) {
+  const player = table.seats.find((seat) => seat && seat.userId === user.id);
+  if (!player) throw new HttpError(403, "你还没有坐下");
+  return player;
+}
+
+function blackjackLobbyPayload(db, user) {
+  const table = findBlackjackPlayerTable(db, user.id);
+  return {
+    type: "blackjack_lobby",
+    user: userPublic(user),
+    minBet: BLACKJACK_MIN_BET,
+    maxBet: BLACKJACK_MAX_BET,
+    seatOptions: BLACKJACK_TABLE_SEAT_OPTIONS,
+    tables: Object.values(db.blackjackTables || {})
+      .map(blackjackTableSummary)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
+    table: table ? publicBlackjackTable(table, user) : null,
+    history: blackjackHistoryForUser(db, user.id),
+    serverTime: nowIso()
+  };
+}
+
+function publicBlackjackTable(table, viewer) {
+  const viewerSeat = table.seats.find((player) => player && viewer && player.userId === viewer.id);
+  const canAct = Boolean(viewerSeat && table.status === "playing" && table.currentTurnSeat === viewerSeat.seat && blackjackPlayerNeedsAction(viewerSeat));
+  const roundPlayers = blackjackRoundPlayers(table);
+  const dealerSettled = table.status === "showdown";
+  const dealerCards = dealerSettled
+    ? table.dealerCards || []
+    : (table.dealerCards || []).map((card, index) => (index === 0 ? card : null));
+  const dealerLabel = dealerSettled ? blackjackScoreLabel(table.dealerCards || []) : ((table.dealerCards || []).length ? "暗牌" : "等待发牌");
+
+  return {
+    id: table.id,
+    type: "blackjack",
+    name: table.name,
+    status: table.status,
+    stage: blackjackStageName(table.status),
+    maxSeats: table.maxSeats,
+    minBet: table.minBet,
+    maxBet: table.maxBet,
+    defaultBet: table.defaultBet,
+    pot: table.pot || 0,
+    handNo: table.handNo || 0,
+    revision: table.revision || 0,
+    updatedAt: table.updatedAt,
+    serverTime: nowIso(),
+    dealerCards,
+    dealerLabel,
+    dealerScore: dealerSettled ? blackjackScore(table.dealerCards || []) : blackjackScore((table.dealerCards || []).slice(0, 1)),
+    currentTurnSeat: table.currentTurnSeat,
+    actionDeadlineAt: table.actionDeadlineAt || null,
+    actionTimeoutMs: BLACKJACK_ACTION_TIMEOUT_MS,
+    results: table.results || [],
+    logs: table.logs || [],
+    chat: table.chat || [],
+    quickMessages: table.quickMessages || TAUNT_MESSAGES,
+    audioSettings: normalizeAudioSettings(table.audioSettings),
+    audioEvents: Array.isArray(table.audioEvents) ? table.audioEvents.slice(-AUDIO_EVENT_LIMIT) : [],
+    youSeat: viewerSeat ? viewerSeat.seat : null,
+    isOwner: Boolean(viewer && table.ownerId === viewer.id),
+    controls: {
+      canAct,
+      canHit: canAct,
+      canStand: canAct,
+      canDouble: Boolean(canAct && (viewerSeat.cards || []).length === 2 && !viewerSeat.doubled && viewerSeat.stack >= viewerSeat.bet),
+      canStart: Boolean(viewerSeat && ["waiting", "showdown"].includes(table.status) && blackjackSeatedPlayers(table).some((player) => player.stack >= table.defaultBet)),
+      canLeave: Boolean(viewerSeat),
+      canDisband: Boolean(viewer && (viewer.isAdmin || table.ownerId === viewer.id)),
+      canJoin: Boolean(!viewerSeat && ["waiting", "showdown"].includes(table.status)),
+      activeHand: table.status === "playing",
+      actionDeadlineAt: table.actionDeadlineAt || null,
+      actionTimeoutMs: BLACKJACK_ACTION_TIMEOUT_MS
+    },
+    seats: table.seats.map((player) => {
+      if (!player) return null;
+      const cards = player.cards || [];
+      return {
+        seat: player.seat,
+        userId: player.userId,
+        username: player.username,
+        isBot: Boolean(player.isBot),
+        stack: player.stack,
+        bet: player.bet || 0,
+        cards,
+        score: blackjackScore(cards),
+        scoreLabel: cards.length ? blackjackScoreLabel(cards) : "等待开局",
+        status: player.status || "waiting",
+        doubled: Boolean(player.doubled),
+        lastAction: player.lastAction || "等待",
+        taunt: player.taunt || null,
+        result: player.result || null,
+        inRound: roundPlayers.some((roundPlayer) => roundPlayer.userId === player.userId)
+      };
+    })
+  };
+}
+
+function createBlackjackTable(owner, body) {
+  const maxSeats = normalizeBlackjackMaxSeats(body.maxSeats);
+  const minBet = clampInt(body.minBet || BLACKJACK_MIN_BET, BLACKJACK_MIN_BET, BLACKJACK_MAX_BET);
+  const maxBet = clampInt(body.maxBet || BLACKJACK_MAX_BET, minBet, BLACKJACK_MAX_BET);
+  const defaultBet = clampInt(body.bet || body.defaultBet || 100, minBet, maxBet);
+  const name = String(body.name || `${owner.username} 的21点桌`).trim().slice(0, 28);
+  const table = {
+    id: randomId(8),
+    type: "blackjack",
+    name,
+    ownerId: owner.id,
+    status: "waiting",
+    maxSeats,
+    seats: Array.from({ length: maxSeats }, () => null),
+    minBet,
+    maxBet,
+    defaultBet,
+    deck: [],
+    dealerCards: [],
+    pot: 0,
+    currentTurnSeat: null,
+    handNo: 0,
+    revision: 0,
+    actionReceipts: {},
+    results: [],
+    logs: [],
+    chat: [],
+    quickMessages: [...TAUNT_MESSAGES],
+    audioSettings: defaultAudioSettings(),
+    audioEvents: [],
+    audioSeq: 0,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+  addLog(table, `${owner.username} 创建 21 点桌`);
+  return table;
+}
+
+function createBlackjackSeatRecord(user, seat, buyIn) {
+  return {
+    seat,
+    userId: user.id,
+    username: user.username,
+    isBot: Boolean(user.isBot),
+    stack: buyIn,
+    bet: 0,
+    cards: [],
+    status: "waiting",
+    doubled: false,
+    result: null,
+    lastAction: "入座"
+  };
+}
+
+function sitUserAtBlackjackTable(db, table, user, requestedBuyIn, requestedSeat = null) {
+  const existing = table.seats.find((seat) => seat && seat.userId === user.id);
+  if (existing) return existing;
+  if (!["waiting", "showdown"].includes(table.status)) throw new HttpError(400, "本轮进行中，暂不能入座");
+  assertPlayerCanJoinBlackjackTable(db, table, user);
+
+  const minBuyIn = Math.max(table.minBet * 10, table.defaultBet);
+  const buyIn = clampInt(requestedBuyIn || table.defaultBet * 20, minBuyIn, 1000000);
+  if (user.chips < buyIn) throw new HttpError(400, "钱包筹码不足");
+  const preferredSeat = requestedSeat == null ? null : clampInt(requestedSeat, 0, table.maxSeats - 1);
+  const seat = preferredSeat != null && !table.seats[preferredSeat]
+    ? preferredSeat
+    : table.seats.findIndex((value) => !value);
+  if (seat < 0) throw new HttpError(400, "21点桌已满");
+
+  user.chips -= buyIn;
+  touchUser(user);
+  table.seats[seat] = createBlackjackSeatRecord(user, seat, buyIn);
+  addLog(table, `${user.username}${user.isBot ? " 机器人" : ""} 带入 ${buyIn} 筹码入座`);
+  touchTable(table);
+  return table.seats[seat];
+}
+
+function setBlackjackTurnDeadline(table) {
+  const player = table.seats[table.currentTurnSeat];
+  if (table.status === "playing" && blackjackPlayerNeedsAction(player)) {
+    table.actionDeadlineAt = new Date(Date.now() + BLACKJACK_ACTION_TIMEOUT_MS).toISOString();
+  } else {
+    table.actionDeadlineAt = null;
+  }
+}
+
+function clearBlackjackTurnDeadline(table) {
+  table.actionDeadlineAt = null;
+}
+
+function isBlackjackDeadlineExpired(table, at = Date.now()) {
+  if (table.status !== "playing" || table.currentTurnSeat == null || !table.actionDeadlineAt) return false;
+  return new Date(table.actionDeadlineAt).getTime() <= at;
+}
+
+function startBlackjackRound(db, table, user, body) {
+  requireBlackjackSeated(table, user);
+  if (!["waiting", "showdown"].includes(table.status)) throw new HttpError(400, "本轮已经开始");
+  const bet = clampInt(body.bet || table.defaultBet || 100, table.minBet, table.maxBet);
+  table.defaultBet = bet;
+  const eligible = blackjackSeatedPlayers(table).filter((player) => player.stack >= bet);
+  if (!eligible.length) throw new HttpError(400, "至少需要 1 名有足够筹码的玩家");
+
+  table.handNo = (table.handNo || 0) + 1;
+  table.status = "playing";
+  table.deck = makeDeck();
+  table.dealerCards = [table.deck.pop(), table.deck.pop()];
+  table.currentTurnSeat = null;
+  table.pot = 0;
+  table.results = [];
+  clearBlackjackTurnDeadline(table);
+
+  for (const player of blackjackSeatedPlayers(table)) {
+    player.cards = [];
+    player.bet = 0;
+    player.doubled = false;
+    player.result = null;
+    player.status = player.stack >= bet ? "playing" : "waiting";
+    player.lastAction = player.status === "playing" ? "等待行动" : "筹码不足旁观";
+    if (player.status !== "playing") continue;
+    player.stack -= bet;
+    player.bet = bet;
+    table.pot += bet;
+    player.cards = [table.deck.pop(), table.deck.pop()];
+    const score = blackjackScore(player.cards);
+    if (score.blackjack) {
+      player.status = "blackjack";
+      player.lastAction = "Blackjack";
+    }
+  }
+
+  table.currentTurnSeat = firstSeat(table, blackjackPlayerNeedsAction);
+  setBlackjackTurnDeadline(table);
+  addLog(table, `第 ${table.handNo} 轮 21 点开始，下注 ${bet}`);
+  addAudioEvent(table, "start", null, { game: "blackjack", bet });
+  addAudioEvent(table, "deal", null, { game: "blackjack", playerCount: eligible.length });
+
+  if (table.currentTurnSeat == null) {
+    settleBlackjackTable(db, table);
+  }
+}
+
+function handleBlackjackTableAction(db, table, user, body) {
+  if (table.status !== "playing") throw new HttpError(400, "当前没有进行中的 21 点牌局", { table: publicBlackjackTable(table, user) });
+  const player = requireBlackjackSeated(table, user);
+  if (!blackjackPlayerNeedsAction(player)) throw new HttpError(400, "当前不能行动");
+  if (table.currentTurnSeat !== player.seat) {
+    throw new HttpError(409, "21点桌状态已更新", { table: publicBlackjackTable(table, user) });
+  }
+
+  const action = String(body.action || "").toLowerCase();
+  if (action === "hit") {
+    player.cards.push(table.deck.pop());
+    const score = blackjackScore(player.cards);
+    if (score.busted) {
+      player.status = "busted";
+      player.lastAction = "要牌爆牌";
+      addLog(table, `${player.username} 要牌后爆牌`);
+    } else if (score.total === 21) {
+      player.status = "stood";
+      player.lastAction = "21点停牌";
+      addLog(table, `${player.username} 要牌到 21 点`);
+    } else {
+      player.lastAction = "要牌";
+      addLog(table, `${player.username} 要牌`);
+    }
+    addAudioEvent(table, "deal", player, { game: "blackjack", action: "hit" });
+  } else if (action === "stand") {
+    player.status = "stood";
+    player.lastAction = "停牌";
+    addLog(table, `${player.username} 停牌`);
+    addAudioEvent(table, "check", player, { game: "blackjack", action: "stand" });
+  } else if (action === "double") {
+    if ((player.cards || []).length !== 2 || player.doubled) throw new HttpError(400, "只有前两张牌时可以加倍");
+    if (player.stack < player.bet) throw new HttpError(400, "桌上筹码不足，无法加倍");
+    const extra = player.bet;
+    player.stack -= extra;
+    player.bet += extra;
+    table.pot += extra;
+    player.doubled = true;
+    player.cards.push(table.deck.pop());
+    const score = blackjackScore(player.cards);
+    player.status = score.busted ? "busted" : "stood";
+    player.lastAction = score.busted ? `加倍爆牌 ${player.bet}` : `加倍 ${player.bet}`;
+    addLog(table, `${player.username} ${player.lastAction}`);
+    addAudioEvent(table, "raise", player, { game: "blackjack", action: "double", amount: extra, total: player.bet });
+  } else {
+    throw new HttpError(400, "未知动作");
+  }
+
+  advanceBlackjackTurn(db, table, player.seat);
+}
+
+function advanceBlackjackTurn(db, table, fromSeat) {
+  if (table.status !== "playing") return;
+  const next = fromSeat == null
+    ? firstSeat(table, blackjackPlayerNeedsAction)
+    : nextSeat(table, fromSeat, blackjackPlayerNeedsAction);
+  if (next == null) {
+    settleBlackjackTable(db, table);
+    return;
+  }
+  table.currentTurnSeat = next;
+  setBlackjackTurnDeadline(table);
+}
+
+function applyBlackjackTimeouts(db, table, at = Date.now()) {
+  let changed = false;
+  let guard = 0;
+  while (isBlackjackDeadlineExpired(table, at) && guard < table.maxSeats + 4) {
+    guard += 1;
+    const player = table.seats[table.currentTurnSeat];
+    if (!blackjackPlayerNeedsAction(player)) {
+      setBlackjackTurnDeadline(table);
+      break;
+    }
+    player.status = "stood";
+    player.lastAction = "超时停牌";
+    addLog(table, `${player.username} 20 秒未行动，自动停牌`);
+    addAudioEvent(table, "timeout", player, { game: "blackjack" });
+    advanceBlackjackTurn(db, table, player.seat);
+    changed = true;
+  }
+  return changed;
+}
+
+function processBlackjackBotTurns(db, table) {
+  let changed = false;
+  let guard = 0;
+  while (table.status === "playing" && guard < 36) {
+    guard += 1;
+    const player = table.seats[table.currentTurnSeat];
+    if (!player || !player.isBot) break;
+    try {
+      handleBlackjackTableAction(db, table, { id: player.userId }, blackjackBotDecision(player));
+      changed = true;
+    } catch (error) {
+      addLog(table, `${player.username} 机器人暂停：${error.message}`);
+      break;
+    }
+  }
+  return changed;
+}
+
+function blackjackBotDecision(player) {
+  const score = blackjackScore(player.cards || []);
+  if ((player.cards || []).length === 2 && [10, 11].includes(score.total) && player.stack >= player.bet && randomInt(100) < 28) {
+    return { action: "double" };
+  }
+  if (score.total <= 11) return { action: "hit" };
+  if (score.total <= 16 && randomInt(100) < 72) return { action: "hit" };
+  return { action: "stand" };
+}
+
+function runAutomaticBlackjackActions(db, table) {
+  const timedOut = applyBlackjackTimeouts(db, table);
+  const bots = processBlackjackBotTurns(db, table);
+  return timedOut || bots;
+}
+
+function playBlackjackDealer(table) {
+  const livePlayer = blackjackRoundPlayers(table).some((player) => !blackjackScore(player.cards || []).busted);
+  if (!livePlayer) return;
+  while (blackjackScore(table.dealerCards || []).total < 17) {
+    table.dealerCards.push(table.deck.pop());
+  }
+}
+
+function settleBlackjackTable(db, table) {
+  if (table.status === "showdown") return;
+  playBlackjackDealer(table);
+  const dealerScore = blackjackScore(table.dealerCards || []);
+  table.results = [];
+
+  for (const player of blackjackRoundPlayers(table)) {
+    const playerScore = blackjackScore(player.cards || []);
+    let payout = 0;
+    let outcome = "lose";
+    let title = "庄家胜";
+
+    if (playerScore.busted || player.status === "busted") {
+      title = "玩家爆牌";
+    } else if (playerScore.blackjack && dealerScore.blackjack) {
+      payout = player.bet;
+      outcome = "push";
+      title = "双方 Blackjack";
+    } else if (playerScore.blackjack) {
+      payout = Math.floor(player.bet * 2.5);
+      outcome = "blackjack";
+      title = "Blackjack";
+    } else if (dealerScore.busted) {
+      payout = player.bet * 2;
+      outcome = "win";
+      title = "庄家爆牌";
+    } else if (dealerScore.blackjack) {
+      title = "庄家 Blackjack";
+    } else if (playerScore.total > dealerScore.total) {
+      payout = player.bet * 2;
+      outcome = "win";
+      title = "玩家胜";
+    } else if (playerScore.total === dealerScore.total) {
+      payout = player.bet;
+      outcome = "push";
+      title = "平局退回";
+    }
+
+    player.stack += payout;
+    player.status = "settled";
+    player.lastAction = title;
+    player.result = {
+      title,
+      outcome,
+      bet: player.bet,
+      payout,
+      profit: payout - player.bet,
+      playerTotal: playerScore.total,
+      dealerTotal: dealerScore.total,
+      playerLabel: blackjackScoreLabel(player.cards),
+      dealerLabel: blackjackScoreLabel(table.dealerCards)
+    };
+    table.results.push({
+      userId: player.userId,
+      username: player.username,
+      seat: player.seat,
+      ...player.result
+    });
+    recordBlackjackTableHistory(db, table, player);
+    player.bet = 0;
+  }
+
+  table.status = "showdown";
+  table.currentTurnSeat = null;
+  table.pot = 0;
+  clearBlackjackTurnDeadline(table);
+  const resultText = table.results.map((result) => `${result.username} ${result.title} ${result.profit >= 0 ? "+" : ""}${result.profit}`).join("，");
+  addLog(table, `21 点结算：${resultText || "无人参与"}`);
+  addAudioEvent(table, "showdown", null, { game: "blackjack", results: table.results });
+}
+
+function recordBlackjackTableHistory(db, table, player) {
+  if (!player.result) return;
+  db.blackjackHistory = db.blackjackHistory || [];
+  db.blackjackHistory.unshift({
+    id: `${table.id}:${table.handNo}:${player.userId}`,
+    at: nowIso(),
+    tableId: table.id,
+    tableName: table.name,
+    handNo: table.handNo || 0,
+    userId: player.userId,
+    username: player.username,
+    bet: player.result.bet,
+    payout: player.result.payout,
+    profit: player.result.profit,
+    outcome: player.result.outcome,
+    title: player.result.title,
+    playerCards: [...(player.cards || [])],
+    dealerCards: [...(table.dealerCards || [])],
+    playerLabel: player.result.playerLabel,
+    dealerLabel: player.result.dealerLabel
+  });
+  db.blackjackHistory = db.blackjackHistory.slice(0, BLACKJACK_HISTORY_LIMIT);
+}
+
+function leaveBlackjackSeat(db, table, user) {
+  const player = requireBlackjackSeated(table, user);
+  const leavingSeat = player.seat;
+  const active = table.status === "playing";
+
+  if (active && (player.cards || []).length > 0 && player.bet > 0) {
+    player.status = "busted";
+    player.lastAction = "离桌弃牌";
+    player.result = {
+      title: "离桌弃牌",
+      outcome: "lose",
+      bet: player.bet,
+      payout: 0,
+      profit: -player.bet,
+      playerTotal: blackjackScore(player.cards || []).total,
+      dealerTotal: blackjackScore(table.dealerCards || []).total,
+      playerLabel: blackjackScoreLabel(player.cards || []),
+      dealerLabel: "未结算"
+    };
+    recordBlackjackTableHistory(db, table, player);
+  }
+
+  user.chips += player.stack;
+  touchUser(user);
+  table.seats[leavingSeat] = null;
+  addLog(table, active
+    ? `${user.username} 离开 21 点桌，带走 ${player.stack}`
+    : `${user.username} 离开 21 点桌，带走 ${player.stack}`);
+
+  if (blackjackSeatedPlayers(table).length === 0) {
+    delete db.blackjackTables[table.id];
+    return;
+  }
+
+  if (active && table.currentTurnSeat === leavingSeat) {
+    advanceBlackjackTurn(db, table, leavingSeat);
+  } else if (active && !blackjackRoundPlayers(table).some(blackjackPlayerNeedsAction)) {
+    settleBlackjackTable(db, table);
+  }
+  touchTable(table);
+}
+
+function disbandBlackjackTable(db, table, actor) {
+  requireTableManager(table, actor);
+  for (const player of blackjackSeatedPlayers(table)) {
+    refundPlayer(db, player, Number(player.stack || 0) + Number(player.bet || 0));
+  }
+  db.audit.unshift({
+    at: nowIso(),
+    actorId: actor.id,
+    actor: actor.username,
+    type: "disband_blackjack_table",
+    tableId: table.id,
+    target: table.name,
+    note: table.status === "playing" ? "21点局中解散，退回本轮下注" : "21点牌桌解散"
+  });
+  db.audit = db.audit.slice(0, 300);
+  delete db.blackjackTables[table.id];
+}
+
 function createTable(owner, body) {
   const smallBlind = clampInt(body.smallBlind || 10, 1, 10000);
   const bigBlind = clampInt(body.bigBlind || smallBlind * 2, smallBlind + 1, 20000);
@@ -1683,12 +2330,20 @@ function setAllTableQuickMessages(db) {
     table.quickMessages = messages;
     touchTable(table);
   }
+  for (const table of Object.values(db.blackjackTables || {})) {
+    table.quickMessages = messages;
+    touchTable(table);
+  }
 }
 
 function setAllTableAudioSettings(db) {
   const settings = normalizeAudioSettings(db.audioSettings);
   db.audioSettings = settings;
   for (const table of Object.values(db.tables)) {
+    table.audioSettings = settings;
+    touchTable(table);
+  }
+  for (const table of Object.values(db.blackjackTables || {})) {
     table.audioSettings = settings;
     touchTable(table);
   }
@@ -1723,9 +2378,30 @@ function removeDeletedUserFromTables(db, user) {
   }
 }
 
+function removeDeletedUserFromBlackjackTables(db, user) {
+  for (const table of Object.values(db.blackjackTables || {})) {
+    const player = table.seats.find((seat) => seat && seat.userId === user.id);
+    if (!player) continue;
+    const seat = player.seat;
+    table.seats[seat] = null;
+    addLog(table, `${user.username} 账号已删除并离开 21 点桌`);
+    if (blackjackSeatedPlayers(table).length === 0) {
+      delete db.blackjackTables[table.id];
+      continue;
+    }
+    if (table.status === "playing" && table.currentTurnSeat === seat) {
+      advanceBlackjackTurn(db, table, seat);
+    } else if (table.status === "playing" && !blackjackRoundPlayers(table).some(blackjackPlayerNeedsAction)) {
+      settleBlackjackTable(db, table);
+    }
+    touchTable(table);
+  }
+}
+
 function deleteUserAccount(db, admin, user) {
   if (user.id === admin.id) throw new HttpError(400, "不能删除当前管理员账号");
   removeDeletedUserFromTables(db, user);
+  removeDeletedUserFromBlackjackTables(db, user);
   for (const [token, session] of Object.entries(db.sessions)) {
     if (session.userId === user.id) delete db.sessions[token];
   }
@@ -2208,7 +2884,136 @@ async function handleApiRequest(request, store, env = {}) {
       if (method === "GET" && segments.length === 1) {
         const db = await readDb();
         const user = requireUser(db, event, { refreshSession: false });
-        return json(200, blackjackPayload(db, user));
+        return json(200, blackjackLobbyPayload(db, user));
+      }
+
+      if (segments[1] === "tables") {
+        if (method === "POST" && segments.length === 2) {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = createBlackjackTable(user, body);
+            table.quickMessages = normalizeQuickMessages(db.quickMessages);
+            table.audioSettings = normalizeAudioSettings(db.audioSettings);
+            db.blackjackTables[table.id] = table;
+            sitUserAtBlackjackTable(db, table, user, body.buyIn || table.defaultBet * 20, body.seat == null ? null : Number(body.seat));
+            return {
+              user: userPublic(user),
+              table: publicBlackjackTable(table, user),
+              tables: Object.values(db.blackjackTables).map(blackjackTableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+            };
+          });
+          return json(201, result);
+        }
+
+        if (method === "GET" && segments[2]) {
+          const db = await readDb();
+          const user = requireUser(db, event, { refreshSession: false });
+          const table = getBlackjackTableOrThrow(db, segments[2]);
+          if (blackjackSeatedPlayers(table).length === 0) throw new HttpError(404, "21点牌桌已解散");
+          const currentPlayer = table.seats[table.currentTurnSeat];
+          const since = Number(event.queryStringParameters?.since || -1);
+          const needsAutomaticAction = Boolean(currentPlayer?.isBot || isBlackjackDeadlineExpired(table));
+
+          if (!needsAutomaticAction) {
+            if (since >= Number(table.revision || 0)) {
+              return json(200, {
+                user: userPublic(user),
+                table: null,
+                unchanged: true,
+                revision: table.revision || 0,
+                serverTime: nowIso()
+              });
+            }
+            return json(200, { user: userPublic(user), table: publicBlackjackTable(table, user) });
+          }
+
+          const result = await withDb((freshDb) => {
+            const freshUser = requireUser(freshDb, event, { refreshSession: false });
+            const freshTable = getBlackjackTableOrThrow(freshDb, segments[2]);
+            if (blackjackSeatedPlayers(freshTable).length === 0) throw new HttpError(404, "21点牌桌已解散");
+            const changed = runAutomaticBlackjackActions(freshDb, freshTable);
+            if (changed) touchTable(freshTable);
+            return { user: userPublic(freshUser), table: publicBlackjackTable(freshTable, freshUser) };
+          });
+          return json(200, result);
+        }
+
+        if (method === "POST" && segments[2] && segments[3] === "join") {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = getBlackjackTableOrThrow(db, segments[2]);
+            sitUserAtBlackjackTable(db, table, user, body.buyIn, body.seat == null ? null : Number(body.seat));
+            return { user: userPublic(user), table: publicBlackjackTable(table, user) };
+          });
+          return json(200, result);
+        }
+
+        if (method === "POST" && segments[2] && segments[3] === "leave") {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = getBlackjackTableOrThrow(db, segments[2]);
+            leaveBlackjackSeat(db, table, user);
+            return {
+              user: userPublic(db.users[user.id]),
+              table: db.blackjackTables?.[table.id] ? publicBlackjackTable(table, user) : null,
+              tables: Object.values(db.blackjackTables || {}).map(blackjackTableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+            };
+          });
+          return json(200, result);
+        }
+
+        if (method === "POST" && segments[2] && segments[3] === "disband") {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = getBlackjackTableOrThrow(db, segments[2]);
+            disbandBlackjackTable(db, table, user);
+            return {
+              user: userPublic(db.users[user.id]),
+              table: null,
+              tables: Object.values(db.blackjackTables || {}).map(blackjackTableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+            };
+          });
+          return json(200, result);
+        }
+
+        if (method === "POST" && segments[2] && segments[3] === "start") {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = getBlackjackTableOrThrow(db, segments[2]);
+            if (commandAlreadyApplied(table, user, body, "blackjack-start")) {
+              return { user: userPublic(user), table: publicBlackjackTable(table, user), duplicate: true };
+            }
+            startBlackjackRound(db, table, user, body);
+            runAutomaticBlackjackActions(db, table);
+            touchTable(table);
+            rememberCommand(table, user, body, "blackjack-start");
+            return { user: userPublic(user), table: publicBlackjackTable(table, user) };
+          });
+          return json(200, result);
+        }
+
+        if (method === "POST" && segments[2] && segments[3] === "action") {
+          const result = await withDb((db) => {
+            const user = requireUser(db, event);
+            const table = getBlackjackTableOrThrow(db, segments[2]);
+            if (commandAlreadyApplied(table, user, body, "blackjack-action")) {
+              return { user: userPublic(user), table: publicBlackjackTable(table, user), duplicate: true };
+            }
+            const timeoutChanged = applyBlackjackTimeouts(db, table);
+            const player = table.seats.find((seat) => seat && seat.userId === user.id);
+            if (timeoutChanged && (!player || table.currentTurnSeat !== player.seat || !blackjackPlayerNeedsAction(player))) {
+              runAutomaticBlackjackActions(db, table);
+              touchTable(table);
+              return { user: userPublic(user), table: publicBlackjackTable(table, user), timedOut: true };
+            }
+            handleBlackjackTableAction(db, table, user, body);
+            runAutomaticBlackjackActions(db, table);
+            touchTable(table);
+            rememberCommand(table, user, body, "blackjack-action");
+            return { user: userPublic(user), table: publicBlackjackTable(table, user) };
+          });
+          return json(200, result);
+        }
       }
 
       const blackjackActions = new Set(["deal", "hit", "stand", "double"]);
