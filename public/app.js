@@ -39,6 +39,12 @@ const SLOT_SYMBOLS = {
 const SLOT_DEFAULT_REELS = ["seven", "bar", "diamond"];
 const SLOT_BET_PRESETS = [50, 100, 500, 1000];
 const SLOT_REVEAL_DELAY_MS = 3600;
+const SLOT_REEL_STEPS = [30, 36, 42];
+const SLOT_REEL_STRIPS = [
+  ["diamond", "seven", "bar", "cherry", "bell", "lemon", "seven", "bar", "diamond", "cherry", "bell", "lemon"],
+  ["seven", "bell", "cherry", "bar", "diamond", "lemon", "bar", "seven", "bell", "diamond", "cherry", "lemon"],
+  ["bar", "diamond", "lemon", "seven", "cherry", "bell", "diamond", "bar", "lemon", "seven", "bell", "cherry"]
+];
 
 const state = {
   token: localStorage.getItem(STORAGE_KEY) || "",
@@ -1215,15 +1221,24 @@ function slotsView() {
 }
 
 function slotReelHtml(symbolId, index, spinMode = "") {
-  const track = ["diamond", "seven", "bar", "bell", "cherry", "lemon", symbolId];
+  const track = slotReelTrack(symbolId, index);
   const modeClass = spinMode === "rolling" ? " rolling" : "";
+  const endStep = track.length - 1;
   return `
     <div class="slot-reel reel-${index + 1}">
-      <div class="slot-reel-track${modeClass}">
+      <div class="slot-reel-track${modeClass}" style="--slot-track-end: -${endStep};">
         ${track.map((item) => slotSymbolHtml(item)).join("")}
       </div>
     </div>
   `;
+}
+
+function slotReelTrack(symbolId, index) {
+  const strip = SLOT_REEL_STRIPS[index % SLOT_REEL_STRIPS.length] || Object.keys(SLOT_SYMBOLS);
+  const steps = SLOT_REEL_STEPS[index % SLOT_REEL_STEPS.length] || 30;
+  const track = Array.from({ length: steps }, (_, step) => strip[step % strip.length] || "cherry");
+  track.push(symbolId);
+  return track;
 }
 
 function slotSymbolHtml(symbolId) {

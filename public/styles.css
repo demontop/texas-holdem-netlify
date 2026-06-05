@@ -418,9 +418,10 @@ h2 {
 }
 
 .slot-reel-track {
+  --slot-reel-row: clamp(118px, 16vw, 170px);
   display: grid;
-  grid-auto-rows: clamp(118px, 16vw, 170px);
-  transform: translateY(calc(-6 * clamp(118px, 16vw, 170px)));
+  grid-auto-rows: var(--slot-reel-row);
+  transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
 }
 
 .slot-reel-track.rolling {
@@ -614,7 +615,7 @@ h2 {
     transform: translateY(0);
   }
   to {
-    transform: translateY(calc(-6 * clamp(118px, 16vw, 170px)));
+    transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
   }
 }
 
