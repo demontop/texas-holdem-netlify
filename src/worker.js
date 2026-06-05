@@ -30,12 +30,21 @@ const SLOT_HISTORY_LIMIT = 120;
 const SLOT_MIN_BET = 10;
 const SLOT_MAX_BET = 100000;
 const SLOT_SYMBOLS = [
-  { id: "cherry", label: "樱桃", weight: 24, triple: 5 },
-  { id: "lemon", label: "柠檬", weight: 22, triple: 4 },
-  { id: "bell", label: "金铃", weight: 17, triple: 8 },
-  { id: "bar", label: "BAR", weight: 13, triple: 12 },
-  { id: "seven", label: "幸运 7", weight: 8, triple: 25 },
-  { id: "diamond", label: "钻石", weight: 5, triple: 50 }
+  { id: "cherry", label: "樱桃", weight: 22, triple: 5, pair: 1 },
+  { id: "lemon", label: "柠檬", weight: 21, triple: 5, pair: 1 },
+  { id: "clover", label: "四叶草", weight: 18, triple: 7, pair: 2 },
+  { id: "bell", label: "金铃", weight: 15, triple: 9, pair: 2 },
+  { id: "horseshoe", label: "马蹄铁", weight: 13, triple: 10, pair: 2 },
+  { id: "bar", label: "金条", weight: 11, triple: 14, pair: 3 },
+  { id: "coin", label: "金币", weight: 10, triple: 16, pair: 3 },
+  { id: "crown", label: "皇冠", weight: 7, triple: 22, pair: 5 },
+  { id: "seven", label: "幸运 7", weight: 6, triple: 30, pair: 4 },
+  { id: "diamond", label: "钻石", weight: 4, triple: 60, pair: 6 }
+];
+const SLOT_SPECIAL_COMBOS = [
+  { ids: ["crown", "diamond", "seven"], title: "皇家幸运组合", multiplier: 12, tier: "jackpot" },
+  { ids: ["bar", "coin", "horseshoe"], title: "黄金连线组合", multiplier: 6, tier: "win" },
+  { ids: ["cherry", "clover", "lemon"], title: "水果幸运组合", multiplier: 3, tier: "win" }
 ];
 
 class HttpError extends Error {
@@ -1130,7 +1139,8 @@ function slotSymbolPublic(symbol) {
   return {
     id: symbol.id,
     label: symbol.label,
-    triple: symbol.triple
+    triple: symbol.triple,
+    pair: symbol.pair
   };
 }
 
@@ -1146,6 +1156,7 @@ function slotsPayload(db, user) {
     minBet: SLOT_MIN_BET,
     maxBet: SLOT_MAX_BET,
     symbols: SLOT_SYMBOLS.map(slotSymbolPublic),
+    specialCombos: SLOT_SPECIAL_COMBOS,
     history: slotHistoryForUser(db, user.id)
   };
 }
@@ -1174,9 +1185,20 @@ function scoreSlot(symbols, bet) {
     };
   }
 
+  const symbolSetKey = symbols.map((symbol) => symbol.id).sort().join("|");
+  const special = SLOT_SPECIAL_COMBOS.find((combo) => combo.ids.slice().sort().join("|") === symbolSetKey);
+  if (special) {
+    return {
+      payout: bet * special.multiplier,
+      multiplier: special.multiplier,
+      title: special.title,
+      tier: special.tier
+    };
+  }
+
   const pair = symbols.find((symbol) => counts.get(symbol.id) === 2);
   if (pair) {
-    const multiplier = pair.id === "diamond" ? 4 : pair.id === "seven" ? 3 : pair.id === "bar" ? 2 : 1;
+    const multiplier = pair.pair || 1;
     return {
       payout: bet * multiplier,
       multiplier,

@@ -29,21 +29,30 @@ const AUDIO_ACTIONS = [
   { key: "showdown", label: "结算" }
 ];
 const SLOT_SYMBOLS = {
-  cherry: { label: "樱桃", glyph: "樱", className: "cherry", triple: "5x" },
-  lemon: { label: "柠檬", glyph: "柠", className: "lemon", triple: "4x" },
-  bell: { label: "金铃", glyph: "铃", className: "bell", triple: "8x" },
-  bar: { label: "BAR", glyph: "BAR", className: "bar", triple: "12x" },
-  seven: { label: "幸运 7", glyph: "7", className: "seven", triple: "25x" },
-  diamond: { label: "钻石", glyph: "◆", className: "diamond", triple: "50x" }
+  cherry: { label: "樱桃", icon: "/assets/slots/cherry.png", className: "cherry", triple: "5x", pair: "1x" },
+  lemon: { label: "柠檬", icon: "/assets/slots/lemon.png", className: "lemon", triple: "5x", pair: "1x" },
+  clover: { label: "四叶草", icon: "/assets/slots/clover.png", className: "clover", triple: "7x", pair: "2x" },
+  bell: { label: "金铃", icon: "/assets/slots/bell.png", className: "bell", triple: "9x", pair: "2x" },
+  horseshoe: { label: "马蹄铁", icon: "/assets/slots/horseshoe.png", className: "horseshoe", triple: "10x", pair: "2x" },
+  bar: { label: "金条", icon: "/assets/slots/goldbar.png", className: "bar", triple: "14x", pair: "3x" },
+  coin: { label: "金币", icon: "/assets/slots/coin.png", className: "coin", triple: "16x", pair: "3x" },
+  crown: { label: "皇冠", icon: "/assets/slots/crown.png", className: "crown", triple: "22x", pair: "5x" },
+  seven: { label: "幸运 7", icon: "/assets/slots/seven.png", className: "seven", triple: "30x", pair: "4x" },
+  diamond: { label: "钻石", icon: "/assets/slots/diamond.png", className: "diamond", triple: "60x", pair: "6x" }
 };
-const SLOT_DEFAULT_REELS = ["seven", "bar", "diamond"];
+const SLOT_SPECIAL_COMBOS = [
+  { ids: ["crown", "seven", "diamond"], label: "皇家幸运组合", multiplier: "12x" },
+  { ids: ["bar", "coin", "horseshoe"], label: "黄金连线组合", multiplier: "6x" },
+  { ids: ["cherry", "lemon", "clover"], label: "水果幸运组合", multiplier: "3x" }
+];
+const SLOT_DEFAULT_REELS = ["seven", "diamond", "crown"];
 const SLOT_BET_PRESETS = [50, 100, 500, 1000];
 const SLOT_REVEAL_DELAY_MS = 3600;
-const SLOT_REEL_STEPS = [30, 36, 42];
+const SLOT_REEL_STEPS = [42, 50, 58];
 const SLOT_REEL_STRIPS = [
-  ["diamond", "seven", "bar", "cherry", "bell", "lemon", "seven", "bar", "diamond", "cherry", "bell", "lemon"],
-  ["seven", "bell", "cherry", "bar", "diamond", "lemon", "bar", "seven", "bell", "diamond", "cherry", "lemon"],
-  ["bar", "diamond", "lemon", "seven", "cherry", "bell", "diamond", "bar", "lemon", "seven", "bell", "cherry"]
+  ["diamond", "seven", "bar", "cherry", "bell", "lemon", "coin", "crown", "clover", "horseshoe", "seven", "bar", "diamond", "coin", "cherry", "bell", "crown", "lemon", "horseshoe", "clover"],
+  ["seven", "bell", "cherry", "bar", "diamond", "lemon", "crown", "coin", "horseshoe", "clover", "bar", "seven", "bell", "diamond", "coin", "cherry", "crown", "lemon", "clover", "horseshoe"],
+  ["bar", "diamond", "lemon", "seven", "cherry", "bell", "horseshoe", "coin", "crown", "clover", "diamond", "bar", "lemon", "seven", "coin", "bell", "crown", "cherry", "horseshoe", "clover"]
 ];
 
 const state = {
@@ -1243,7 +1252,11 @@ function slotReelTrack(symbolId, index) {
 
 function slotSymbolHtml(symbolId) {
   const symbol = slotSymbolMeta(symbolId);
-  return `<span class="slot-symbol ${symbol.className}" title="${escapeAttr(symbol.label)}">${escapeHtml(symbol.glyph)}</span>`;
+  return `
+    <span class="slot-symbol ${symbol.className}" title="${escapeAttr(symbol.label)}">
+      <img src="${escapeAttr(symbol.icon)}" alt="${escapeAttr(symbol.label)}" loading="lazy" decoding="async" />
+    </span>
+  `;
 }
 
 function slotSymbolMeta(symbolId) {
@@ -1261,7 +1274,20 @@ function slotPaytableHtml() {
   const triples = Object.entries(SLOT_SYMBOLS)
     .map(([id, symbol]) => `<p>${slotSymbolHtml(id)}<span>${escapeHtml(symbol.label)} 三连</span><b>${symbol.triple}</b></p>`)
     .join("");
-  return `${triples}<p><i>一对</i><span>钻石一对</span><b>4x</b></p><p><i>一对</i><span>幸运 7 一对</span><b>3x</b></p><p><i>一对</i><span>BAR 一对</span><b>2x</b></p><p><i>一对</i><span>普通一对</span><b>1x</b></p>`;
+  const pairs = Object.entries(SLOT_SYMBOLS)
+    .filter(([, symbol]) => symbol.pair && symbol.pair !== "1x")
+    .map(([id, symbol]) => `<p>${slotSymbolHtml(id)}<span>${escapeHtml(symbol.label)} 一对</span><b>${symbol.pair}</b></p>`)
+    .join("");
+  const specials = SLOT_SPECIAL_COMBOS
+    .map((combo) => `
+      <p>
+        <span class="slot-combo-symbols">${combo.ids.map((id) => slotSymbolHtml(id)).join("")}</span>
+        <span>${escapeHtml(combo.label)}</span>
+        <b>${escapeHtml(combo.multiplier)}</b>
+      </p>
+    `)
+    .join("");
+  return `${specials}${triples}${pairs}`;
 }
 
 function slotHistoryHtml(history) {
