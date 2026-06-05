@@ -1230,12 +1230,22 @@ function slotsView() {
 }
 
 function slotReelHtml(symbolId, index, spinMode = "") {
+  const isRolling = spinMode === "rolling";
+  if (!isRolling) {
+    return `
+      <div class="slot-reel reel-${index + 1} is-static">
+        <div class="slot-reel-static">
+          ${slotSymbolHtml(symbolId)}
+        </div>
+      </div>
+    `;
+  }
+
   const track = slotReelTrack(symbolId, index);
-  const modeClass = spinMode === "rolling" ? " rolling" : "";
   const endStep = track.length - 1;
   return `
-    <div class="slot-reel reel-${index + 1}">
-      <div class="slot-reel-track${modeClass}" style="--slot-track-end: -${endStep};">
+    <div class="slot-reel reel-${index + 1} is-rolling">
+      <div class="slot-reel-track rolling" style="--slot-track-end: -${endStep};">
         ${track.map((item) => slotSymbolHtml(item)).join("")}
       </div>
     </div>
