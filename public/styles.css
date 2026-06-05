@@ -405,9 +405,10 @@ h2 {
 }
 
 .slot-reel {
+  --slot-reel-window: clamp(118px, 16vw, 170px);
   position: relative;
   overflow: hidden;
-  height: clamp(118px, 16vw, 170px);
+  height: var(--slot-reel-window);
   border: 2px solid rgba(255, 224, 157, 0.46);
   border-radius: 8px;
   background:
@@ -439,12 +440,13 @@ h2 {
 }
 
 .slot-reel-track {
-  --slot-reel-row: clamp(118px, 16vw, 170px);
+  --slot-reel-row: var(--slot-reel-window);
+  --slot-reel-offset: 0px;
   position: relative;
   z-index: 1;
   display: grid;
   grid-auto-rows: var(--slot-reel-row);
-  transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
+  transform: translateY(calc((var(--slot-track-end, -6) * var(--slot-reel-row)) + var(--slot-reel-offset)));
   will-change: transform;
 }
 
@@ -637,10 +639,10 @@ h2 {
 
 @keyframes slotRoll {
   from {
-    transform: translateY(0);
+    transform: translateY(var(--slot-reel-offset));
   }
   to {
-    transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
+    transform: translateY(calc((var(--slot-track-end, -6) * var(--slot-reel-row)) + var(--slot-reel-offset)));
   }
 }
 
