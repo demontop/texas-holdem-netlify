@@ -1113,7 +1113,7 @@ function nameFromAudioSource(src) {
 
 function shell(content) {
   const user = state.user;
-  const shellClass = `app-shell ${state.view === "table" ? "table-shell" : ""}`.trim();
+  const shellClass = `app-shell ${state.view === "table" || state.view === "blackjack" ? "table-shell" : ""} ${state.view === "blackjack" ? "blackjack-shell" : ""}`.trim();
   return `
     <div class="${shellClass}">
       <header class="topbar">
@@ -1370,66 +1370,92 @@ function blackjackView() {
   const bet = Math.max(10, Number(game.bet || 100));
   const playing = hand?.status === "playing";
   return shell(`
-    <main class="blackjack-view">
-      <section class="blackjack-table ${playing ? "playing" : ""}">
-        <div class="section-title">
-          <div>
-            <h1>21点</h1>
-            <p>玩家对庄，服务器发牌结算</p>
-          </div>
-          <button class="ghost" data-action="lobby">返回大厅</button>
+    <main class="game-layout blackjack-layout stage-${hand?.status || "waiting"}">
+      <div class="casino-room" aria-hidden="true">
+        <span class="room-column column-left"></span>
+        <span class="room-column column-right"></span>
+      </div>
+      <section class="table-toolbar">
+        <button class="ghost" data-action="back-lobby">大厅</button>
+        <div class="table-title">
+          <strong>21点</strong>
+          <span class="table-subline">
+            <span>玩家对庄 · 服务器发牌结算</span>
+            ${pingBadgeHtml()}
+          </span>
         </div>
-        <div class="blackjack-felt">
-          <div class="blackjack-hand dealer">
-            <div class="blackjack-hand-head">
+        <div class="toolbar-actions">
+          <button class="ghost slim rules-toggle ${state.rulesOpen ? "active" : ""}" data-action="toggle-rules" aria-expanded="${state.rulesOpen ? "true" : "false"}">规则</button>
+          <button class="ghost slim" data-action="blackjack">刷新</button>
+        </div>
+      </section>
+      <section class="poker-room blackjack-room">
+        <div class="felt-table blackjack-felt-table ${playing ? "playing" : ""}">
+          <div class="rail"></div>
+          <div class="blackjack-table-mark" aria-hidden="true">
+            <strong>BLACKJACK</strong>
+            <span>Dealer stands on 17</span>
+          </div>
+          <div class="blackjack-seat blackjack-dealer">
+            <div class="avatar-ring dealer-avatar" style="--avatar-hue:42;--turn-progress:1">
+              <div class="avatar-face">
+                <span>D</span>
+              </div>
+            </div>
+            <div class="blackjack-seat-info">
               <strong>庄家</strong>
               <span>${escapeHtml(hand?.dealerLabel || "等待发牌")}</span>
             </div>
-            <div class="blackjack-cards">
+            <div class="blackjack-cards dealer-cards">
               ${blackjackCardsHtml(hand?.dealerCards || [])}
             </div>
           </div>
-          <div class="blackjack-status ${blackjackResultClass(hand)}">
-            ${blackjackStatusHtml(hand)}
+          <div class="blackjack-center">
+            <div class="blackjack-pot">
+              ${chipStackHtml(hand?.bet || bet)}
+              <span>${hand ? "本局下注" : "准备下注"}</span>
+            </div>
+            <div class="blackjack-status ${blackjackResultClass(hand)}">
+              ${blackjackStatusHtml(hand)}
+            </div>
           </div>
-          <div class="blackjack-hand player">
-            <div class="blackjack-hand-head">
+          <div class="blackjack-seat blackjack-player">
+            <div class="avatar-ring player-avatar" style="--avatar-hue:${avatarHue(state.user?.username)};--turn-progress:1">
+              <div class="avatar-face">
+                <span>${escapeHtml(avatarInitial(state.user?.username))}</span>
+              </div>
+            </div>
+            <div class="blackjack-seat-info">
               <strong>${escapeHtml(state.user?.username || "玩家")}</strong>
               <span>${escapeHtml(hand?.playerLabel || "等待发牌")}</span>
             </div>
-            <div class="blackjack-cards">
+            <div class="blackjack-cards player-cards">
               ${blackjackCardsHtml(hand?.playerCards || [])}
             </div>
+            <div class="blackjack-wallet">${chipStackHtml(state.user?.chips || 0, true)}<span>钱包</span></div>
           </div>
-        </div>
-        <div class="blackjack-panel">
-          ${playing ? blackjackActionsHtml(hand) : blackjackDealFormHtml(bet, Boolean(hand))}
         </div>
       </section>
-      <aside class="blackjack-side">
-        <section class="blackjack-card">
-          <h2>赔率</h2>
-          <div class="blackjack-rules">
-            <p><span>Blackjack</span><b>3:2</b></p>
-            <p><span>普通胜</span><b>1:1</b></p>
-            <p><span>平局</span><b>退回本金</b></p>
-            <p><span>庄家</span><b>17 点停牌</b></p>
-          </div>
-        </section>
-        <section class="blackjack-card">
+      <aside class="side-panel blackjack-side-panel">
+        ${blackjackControlPanelHtml(hand, bet)}
+        <div class="log-panel blackjack-log-panel">
           <h2>最近记录</h2>
           <div class="blackjack-history">${blackjackHistoryHtml(game.history || [])}</div>
-        </section>
+        </div>
       </aside>
+      ${blackjackRulesPanelHtml()}
     </main>
   `);
 }
 
 function blackjackCardsHtml(cards) {
   if (!cards.length) {
-    return `<div class="blackjack-empty-card">${cardHtml(null)}</div><div class="blackjack-empty-card">${cardHtml(null)}</div>`;
+    return `
+      <span class="blackjack-card-slot empty" style="--i:0">${cardHtml(null)}</span>
+      <span class="blackjack-card-slot empty" style="--i:1">${cardHtml(null)}</span>
+    `;
   }
-  return cards.map((card) => cardHtml(card)).join("");
+  return cards.map((card, index) => `<span class="blackjack-card-slot" style="--i:${index}">${cardHtml(card)}</span>`).join("");
 }
 
 function blackjackStatusHtml(hand) {
@@ -1448,13 +1474,26 @@ function blackjackResultClass(hand) {
   return String(outcome).replace(/[^\w-]/g, "");
 }
 
+function blackjackControlPanelHtml(hand, bet) {
+  const playing = hand?.status === "playing";
+  return `
+    <div class="control-panel blackjack-control ${playing ? "live" : "ready"}">
+      <div class="action-status">
+        <span class="${playing ? "live-dot" : ""}">${playing ? "轮到你" : "下注区"}</span>
+        <b>${playing ? escapeHtml(hand.playerLabel || "当前手牌") : "选择筹码发牌"}</b>
+      </div>
+      ${playing ? blackjackActionsHtml(hand) : blackjackDealFormHtml(bet, Boolean(hand))}
+    </div>
+  `;
+}
+
 function blackjackActionsHtml(hand) {
   const actions = hand?.actions || {};
   return `
-    <div class="blackjack-actions">
-      <button class="primary" data-blackjack-action="hit" ${actions.canHit ? "" : "disabled"}>要牌</button>
-      <button class="success" data-blackjack-action="stand" ${actions.canStand ? "" : "disabled"}>停牌</button>
-      <button class="ghost" data-blackjack-action="double" ${actions.canDouble ? "" : "disabled"}>加倍 ${money(hand.bet || 0)}</button>
+    <div class="action-bottom-bar blackjack-actions">
+      <button class="primary action-big" data-blackjack-action="hit" ${actions.canHit ? "" : "disabled"}>要牌</button>
+      <button class="success action-big" data-blackjack-action="stand" ${actions.canStand ? "" : "disabled"}>停牌</button>
+      <button class="ghost action-big allin" data-blackjack-action="double" ${actions.canDouble ? "" : "disabled"}>加倍 ${money(hand.bet || 0)}</button>
     </div>
   `;
 }
@@ -1471,6 +1510,24 @@ function blackjackDealFormHtml(bet, hasHand) {
       </div>
       <button class="primary" type="submit" ${bet > Number(state.user?.chips || 0) ? "disabled" : ""}>${hasHand ? "再来一局" : "发牌"}</button>
     </form>
+  `;
+}
+
+function blackjackRulesPanelHtml() {
+  return `
+    <section class="rules-drawer ${state.rulesOpen ? "open" : ""}" data-rules-drawer aria-hidden="${state.rulesOpen ? "false" : "true"}">
+      <div class="rules-head">
+        <h2>21点规则</h2>
+        <button class="ghost slim" data-action="toggle-rules">关闭</button>
+      </div>
+      <div class="rules-body">
+        <p><strong>目标</strong>：手牌点数尽量接近 21 点，但不能超过 21 点。</p>
+        <p><strong>点数</strong>：2-10 按牌面计算，J/Q/K 为 10 点，A 可算 1 点或 11 点。</p>
+        <p><strong>操作</strong>：发牌后可以要牌、停牌；前两张牌时可加倍，加倍会追加同额下注并只补一张牌。</p>
+        <p><strong>庄家</strong>：玩家停牌或爆牌后，庄家亮出暗牌并在低于 17 点时继续补牌。</p>
+        <p><strong>派彩</strong>：Blackjack 为 3:2，普通胜为 1:1，平局退回本金。</p>
+      </div>
+    </section>
   `;
 }
 
