@@ -29,7 +29,7 @@ const AUDIO_ACTIONS = [
   { key: "showdown", label: "结算" }
 ];
 const SLOT_SYMBOLS = {
-  cherry: { label: "樱桃", icon: "/assets/slots/cherry.png", className: "cherry", triple: "5x", pair: "1x" },
+  cherry: { label: "樱桃", icon: "/assets/slots/cherry-full.png", className: "cherry", triple: "5x", pair: "1x" },
   lemon: { label: "柠檬", icon: "/assets/slots/lemon.png", className: "lemon", triple: "5x", pair: "1x" },
   clover: { label: "四叶草", icon: "/assets/slots/clover.png", className: "clover", triple: "7x", pair: "2x" },
   bell: { label: "金铃", icon: "/assets/slots/bell.png", className: "bell", triple: "9x", pair: "2x" },

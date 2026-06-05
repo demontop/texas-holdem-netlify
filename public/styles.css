@@ -489,6 +489,11 @@ h2 {
   height: min(82%, 148px);
 }
 
+.slot-reel .slot-symbol.cherry img {
+  width: min(76%, 136px);
+  height: min(76%, 136px);
+}
+
 .slot-result {
   position: relative;
   z-index: 1;
