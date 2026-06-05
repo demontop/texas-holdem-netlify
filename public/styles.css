@@ -405,6 +405,7 @@ h2 {
 }
 
 .slot-reel {
+  position: relative;
   overflow: hidden;
   height: clamp(118px, 16vw, 170px);
   border: 2px solid rgba(255, 224, 157, 0.46);
@@ -417,8 +418,21 @@ h2 {
     0 18px 28px rgba(0, 0, 0, 0.28);
 }
 
+.slot-reel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(2, 3, 10, 0.92), transparent 22%, transparent 78%, rgba(2, 3, 10, 0.92));
+  pointer-events: none;
+}
+
 .slot-reel-track {
   --slot-reel-row: clamp(118px, 16vw, 170px);
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-auto-rows: var(--slot-reel-row);
   transform: translateY(calc(var(--slot-track-end, -6) * var(--slot-reel-row)));
@@ -426,7 +440,7 @@ h2 {
 }
 
 .slot-reel-track.rolling {
-  animation: slotRoll 3.6s steps(var(--slot-track-steps, 42), end) 1 both;
+  animation: slotRoll 3.6s cubic-bezier(0.08, 0.72, 0.16, 1) 1 both;
 }
 
 .reel-2 .slot-reel-track.rolling {
