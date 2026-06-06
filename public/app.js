@@ -470,8 +470,8 @@ async function bootstrap() {
   try {
     const { user } = await api("/me");
     state.user = user;
-    state.view = "lobby";
-    await loadLobby();
+    state.view = "games";
+    render();
   } catch {
     logout();
   }
@@ -485,8 +485,10 @@ async function submitAuth(formElement) {
   await runBusy(async () => {
     const result = await api(endpoint, { method: "POST", body: { username, password } });
     persistSession(result.token, result.user);
-    state.view = "lobby";
-    await loadLobby();
+    state.view = "games";
+    state.table = null;
+    state.blackjack.table = null;
+    await refreshPresence();
   });
 }
 
@@ -501,6 +503,16 @@ async function loadLobby(silent = false) {
   } catch (error) {
     if (!silent) setMessage(error.message);
   }
+}
+
+async function openPokerLobby() {
+  state.table = null;
+  state.rulesOpen = false;
+  state.chatOpen = false;
+  state.blackjack.table = null;
+  stopPolling();
+  await loadLobby();
+  startPolling(700);
 }
 
 async function openSlots() {
@@ -1327,14 +1339,15 @@ function shell(content) {
   return `
     <div class="${shellClass}">
       <header class="topbar">
-        <button class="brand" data-action="lobby" ${!user ? "disabled" : ""}>
-          <span class="brand-mark">TH</span>
-          <span>德州扑克桌</span>
+        <button class="brand" data-action="game-home" ${!user ? "disabled" : ""}>
+          <span class="brand-mark">GH</span>
+          <span>游戏大厅</span>
         </button>
         <div class="top-actions">
           ${user ? `<span class="wallet">${chipStackHtml(user.chips, true)}<span>${user.username}</span></span>` : ""}
-          ${user ? `<button class="icon-text" data-action="slots">老虎机</button>` : ""}
-          ${user ? `<button class="icon-text" data-action="blackjack">21点</button>` : ""}
+          ${user ? `<button class="icon-text ${state.view === "lobby" || state.view === "table" ? "active" : ""}" data-action="poker-lobby">德州扑克</button>` : ""}
+          ${user ? `<button class="icon-text ${state.view === "blackjack" ? "active" : ""}" data-action="blackjack">21点</button>` : ""}
+          ${user ? `<button class="icon-text ${state.view === "slots" ? "active" : ""}" data-action="slots">老虎机</button>` : ""}
           ${user?.isAdmin ? `<button class="icon-text" data-action="admin">后台</button>` : ""}
           ${user ? `<button class="ghost" data-action="logout">退出</button>` : ""}
         </div>
@@ -1343,6 +1356,69 @@ function shell(content) {
       ${state.message ? `<div class="toast">${state.message}</div>` : ""}
     </div>
   `;
+}
+
+function gamesView() {
+  return shell(`
+    <main class="games-lobby">
+      <section class="games-main">
+        <div class="section-title">
+          <div>
+            <h1>游戏大厅</h1>
+            <p>选择玩法后进入对应房间</p>
+          </div>
+        </div>
+        <div class="game-grid">
+          <article class="game-card game-card-poker">
+            <div class="game-card-art" aria-hidden="true">
+              <span class="game-card-felt"></span>
+              <span class="game-card-deck red">A</span>
+              <span class="game-card-deck black">K</span>
+              <span class="game-chip-stack">${chipStackHtml(188000, true)}</span>
+            </div>
+            <div>
+              <h2>德州扑克</h2>
+              <p>多人联网牌桌，支持 3 / 5 / 7 / 9 人桌、机器人陪玩和管理员活动筹码。</p>
+            </div>
+            <button class="primary" data-action="poker-lobby">进入德扑大厅</button>
+          </article>
+          <article class="game-card game-card-blackjack">
+            <div class="game-card-art" aria-hidden="true">
+              <span class="game-card-dealer"></span>
+              <span class="game-card-deck red">J</span>
+              <span class="game-card-deck black">10</span>
+              <span class="game-chip-stack">${chipStackHtml(21000, true)}</span>
+            </div>
+            <div>
+              <h2>21点</h2>
+              <p>多人同桌对庄，服务器统一发牌、计分和结算，适合快速开局。</p>
+            </div>
+            <button class="primary" data-action="blackjack">进入21点大厅</button>
+          </article>
+          <article class="game-card game-card-slots">
+            <div class="game-card-art" aria-hidden="true">
+              ${["seven", "diamond", "crown"].map((symbol) => `<span class="game-slot-symbol">${slotSymbolHtml(symbol)}</span>`).join("")}
+            </div>
+            <div>
+              <h2>幸运老虎机</h2>
+              <p>钱包筹码玩法，滚轮动画和开奖结果由服务器返回，随时快速旋转。</p>
+            </div>
+            <button class="primary" data-action="slots">进入老虎机</button>
+          </article>
+        </div>
+      </section>
+      <aside class="games-side">
+        <section class="wallet-panel">
+          <h2>当前账户</h2>
+          <div class="wallet-balance">
+            ${chipStackHtml(state.user?.chips || 0, true)}
+            <strong>${escapeHtml(state.user?.username || "玩家")}</strong>
+          </div>
+        </section>
+        ${onlinePanelHtml()}
+      </aside>
+    </main>
+  `);
 }
 
 function authView() {
@@ -1362,7 +1438,7 @@ function authView() {
             <span>密码</span>
             <input name="password" type="password" autocomplete="current-password" minlength="6" required />
           </label>
-          <button class="primary" type="submit">${state.authMode === "register" ? "创建账号" : "进入牌局"}</button>
+          <button class="primary" type="submit">${state.authMode === "register" ? "创建账号" : "进入大厅"}</button>
         </form>
       </section>
       <section class="preview-table" aria-hidden="true">
@@ -2625,7 +2701,7 @@ function adminView() {
       <section class="admin-card">
         <div class="section-title">
           <h1>管理员后台</h1>
-          <button class="ghost" data-action="back-lobby">返回</button>
+          <button class="ghost" data-action="game-home">返回</button>
         </div>
         <h2>设置账户余额</h2>
         <form class="recharge-form" data-form="set-balance">
@@ -2750,6 +2826,8 @@ function render() {
     $app.innerHTML = blackjackView();
   } else if (state.view === "admin") {
     $app.innerHTML = adminView();
+  } else if (state.view === "games") {
+    $app.innerHTML = gamesView();
   } else {
     if ($app.querySelector(".lobby")) {
       patchLobbyView();
@@ -3540,14 +3618,19 @@ document.addEventListener("click", async (event) => {
 
   const action = target.dataset.action;
   if (action === "logout") logout();
-  if (action === "lobby" || action === "back-lobby") {
-    state.view = "lobby";
+  if (action === "game-home" || action === "lobby") {
+    state.view = "games";
     state.table = null;
+    state.blackjack.table = null;
     state.rulesOpen = false;
     state.chatOpen = false;
     stopPolling();
-    await loadLobby();
-    startPolling();
+    render();
+    return;
+  }
+  if (action === "poker-lobby" || action === "back-lobby") {
+    await openPokerLobby();
+    return;
   }
   if (action === "refresh-lobby") await loadLobby();
   if (action === "slots") await openSlots();

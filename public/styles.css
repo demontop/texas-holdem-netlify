@@ -167,6 +167,12 @@ label span {
   background: rgba(255, 255, 255, 0.07);
 }
 
+.icon-text.active {
+  border-color: rgba(255, 224, 157, 0.55);
+  background: rgba(215, 173, 89, 0.16);
+  color: #ffe9ac;
+}
+
 .slim {
   min-height: 36px;
   padding-inline: 14px;
@@ -269,6 +275,205 @@ label span {
 .mini-pot {
   position: absolute;
   bottom: 21%;
+}
+
+.games-lobby {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 20px;
+  width: min(1240px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 26px 0;
+}
+
+.games-main,
+.games-side,
+.wallet-panel {
+  min-width: 0;
+}
+
+.games-main .section-title p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.game-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.game-card,
+.wallet-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.34);
+}
+
+.game-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 16px;
+  min-height: 430px;
+  padding: 18px;
+}
+
+.game-card h2 {
+  margin-bottom: 8px;
+  font-size: 22px;
+}
+
+.game-card p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.game-card-art {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 190px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 224, 157, 0.18);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 26%, rgba(255, 224, 157, 0.16), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.game-card-poker .game-card-art {
+  background:
+    radial-gradient(ellipse at 50% 64%, rgba(29, 152, 91, 0.88), rgba(7, 71, 48, 0.82) 56%, transparent 57%),
+    linear-gradient(180deg, rgba(44, 24, 18, 0.66), rgba(13, 11, 12, 0.94));
+}
+
+.game-card-blackjack .game-card-art {
+  background:
+    radial-gradient(circle at 42% 24%, rgba(213, 168, 74, 0.2), transparent 32%),
+    radial-gradient(ellipse at 50% 68%, rgba(20, 107, 69, 0.9), rgba(6, 47, 37, 0.88) 58%, transparent 59%),
+    linear-gradient(180deg, rgba(31, 28, 34, 0.82), rgba(8, 10, 13, 0.96));
+}
+
+.game-card-slots .game-card-art {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(39, 20, 41, 0.92), rgba(11, 13, 22, 0.96)),
+    linear-gradient(120deg, rgba(213, 168, 74, 0.18), transparent 44%);
+}
+
+.game-card-felt {
+  position: absolute;
+  inset: 42% 8% 8%;
+  border-radius: 50%;
+  border: 8px solid rgba(10, 9, 8, 0.62);
+  box-shadow: inset 0 0 0 4px rgba(255, 224, 157, 0.2);
+}
+
+.game-card-dealer {
+  position: absolute;
+  top: 28px;
+  width: 74px;
+  height: 74px;
+  border: 3px solid rgba(255, 224, 157, 0.62);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 34%, #f5d0b3 0 19%, transparent 20%),
+    radial-gradient(circle at 50% 78%, #353b46 0 33%, transparent 34%),
+    linear-gradient(145deg, #6f402d, #191017);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+}
+
+.game-card-deck {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  aspect-ratio: 0.72;
+  border-radius: 7px;
+  background: var(--cream);
+  color: #111;
+  font-size: 32px;
+  font-weight: 900;
+  box-shadow: 0 14px 22px rgba(0, 0, 0, 0.28);
+}
+
+.game-card-deck.red {
+  color: #bd1f2e;
+  transform: translate(-24px, 18px) rotate(-7deg);
+}
+
+.game-card-deck.black {
+  color: #111;
+  transform: translate(24px, -10px) rotate(6deg);
+}
+
+.game-card-art .game-card-deck + .game-card-deck {
+  margin-top: -90px;
+}
+
+.game-chip-stack {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+}
+
+.game-slot-symbol {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  aspect-ratio: 1;
+  border: 2px solid rgba(255, 224, 157, 0.42);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.game-slot-symbol .slot-symbol {
+  width: 86%;
+  height: 86%;
+}
+
+.game-slot-symbol .slot-symbol img {
+  width: 100%;
+  height: 100%;
+}
+
+.games-side {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.wallet-panel {
+  padding: 18px;
+}
+
+.wallet-balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wallet-balance strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.games-side .online-panel {
+  margin-top: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
 }
 
 .lobby {
@@ -1778,10 +1983,15 @@ th {
 
 @media (max-width: 1060px) {
   .game-layout,
+  .games-lobby,
   .lobby,
   .slots-view,
   .blackjack-view,
   .admin-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .game-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1827,6 +2037,14 @@ th {
 
   .table-row {
     grid-template-columns: 1fr;
+  }
+
+  .game-card {
+    min-height: 0;
+  }
+
+  .game-card-art {
+    min-height: 160px;
   }
 
   .buyin-line,
