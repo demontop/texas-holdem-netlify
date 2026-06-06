@@ -3,6 +3,8 @@
 
 const ACTIVE_STAGES = new Set(["preflop", "flop", "turn", "river"]);
 const ACTION_TIMEOUT_MS = 20000;
+const ONLINE_WINDOW_MS = 60000;
+const PRESENCE_TOUCH_INTERVAL_MS = 15000;
 const TAUNT_MESSAGES = [
   "跟得起吗？",
   "这把我收了",
@@ -462,6 +464,8 @@ function createSession(db, userId) {
     createdAt: Date.now(),
     expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 14
   };
+  const user = db.users[userId];
+  if (user) markUserOnline(user, Date.now(), { force: true });
   return token;
 }
 
@@ -473,6 +477,7 @@ function userPublic(user) {
     revision: Number(user.revision || 0),
     isAdmin: Boolean(user.isAdmin),
     isBot: Boolean(user.isBot),
+    lastSeenAt: user.lastSeenAt || null,
     createdAt: user.createdAt
   };
 }
@@ -499,6 +504,70 @@ function userFromToken(db, token) {
   return user;
 }
 
+function presenceTime(user) {
+  const stamp = new Date(user?.lastSeenAt || 0).getTime();
+  return Number.isFinite(stamp) ? stamp : 0;
+}
+
+function isUserOnline(user, at = Date.now()) {
+  const lastSeen = presenceTime(user);
+  return lastSeen > 0 && at - lastSeen <= ONLINE_WINDOW_MS;
+}
+
+function shouldTouchPresence(user, at = Date.now()) {
+  const lastSeen = presenceTime(user);
+  return !lastSeen || at - lastSeen >= PRESENCE_TOUCH_INTERVAL_MS;
+}
+
+function markUserOnline(user, at = Date.now(), options = {}) {
+  if (!user || (!options.force && !shouldTouchPresence(user, at))) return false;
+  const wasOnline = isUserOnline(user, at);
+  const stamp = new Date(at).toISOString();
+  user.lastSeenAt = stamp;
+  if (!wasOnline || !user.onlineSinceAt) user.onlineSinceAt = stamp;
+  return true;
+}
+
+function onlineLocation(db, user) {
+  const pokerTable = findPlayerTable(db, user.id);
+  if (pokerTable) {
+    return { type: "holdem", label: pokerTable.name, tableId: pokerTable.id };
+  }
+  const blackjackTable = findBlackjackPlayerTable(db, user.id);
+  if (blackjackTable) {
+    return { type: "blackjack", label: blackjackTable.name, tableId: blackjackTable.id };
+  }
+  return { type: "lobby", label: "大厅" };
+}
+
+function onlineUserPublic(db, user, at = Date.now()) {
+  return {
+    id: user.id,
+    username: user.username,
+    isAdmin: Boolean(user.isAdmin),
+    isBot: Boolean(user.isBot),
+    lastSeenAt: user.lastSeenAt || null,
+    onlineSinceAt: user.onlineSinceAt || user.lastSeenAt || null,
+    location: onlineLocation(db, user),
+    isSelf: false,
+    online: isUserOnline(user, at)
+  };
+}
+
+function onlineUsersPayload(db, viewer = null) {
+  const at = Date.now();
+  return Object.values(db.users || {})
+    .filter((user) => isUserOnline(user, at))
+    .map((user) => ({
+      ...onlineUserPublic(db, user, at),
+      isSelf: Boolean(viewer && user.id === viewer.id)
+    }))
+    .sort((a, b) => {
+      if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+      return new Date(b.lastSeenAt || 0) - new Date(a.lastSeenAt || 0);
+    });
+}
+
 function requireUser(db, event, options = {}) {
   const token = getToken(event);
   const user = userFromToken(db, token);
@@ -506,6 +575,7 @@ function requireUser(db, event, options = {}) {
   if (options.refreshSession !== false) {
     session.expiresAt = Date.now() + 1000 * 60 * 60 * 24 * 14;
   }
+  if (options.markPresence !== false) markUserOnline(user);
   return user;
 }
 
@@ -1005,6 +1075,7 @@ function lobbyPayload(db, user) {
     type: "lobby",
     user: userPublic(user),
     tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
+    onlineUsers: onlineUsersPayload(db, user),
     serverTime: nowIso()
   };
 }
@@ -1652,6 +1723,7 @@ function blackjackLobbyPayload(db, user) {
       .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)),
     table: table ? publicBlackjackTable(table, user) : null,
     history: blackjackHistoryForUser(db, user.id),
+    onlineUsers: onlineUsersPayload(db, user),
     serverTime: nowIso()
   };
 }
@@ -2681,6 +2753,18 @@ async function handleApiRequest(request, store, env = {}) {
       return json(200, result);
     }
 
+    if (method === "GET" && segments[0] === "presence") {
+      const result = await withDb((db) => {
+        const user = requireUser(db, event, { refreshSession: false });
+        return {
+          user: userPublic(user),
+          onlineUsers: onlineUsersPayload(db, user),
+          serverTime: nowIso()
+        };
+      });
+      return json(200, result);
+    }
+
     if (segments[0] === "admin") {
       if (method === "GET" && segments[1] === "users") {
         const db = await readDb();
@@ -2858,10 +2942,7 @@ async function handleApiRequest(request, store, env = {}) {
     if (method === "GET" && segments[0] === "lobby") {
       const db = await readDb();
       const user = requireUser(db, event, { refreshSession: false });
-      return json(200, {
-        user: userPublic(user),
-        tables: Object.values(db.tables).map(tableSummary).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-      });
+      return json(200, lobbyPayload(db, user));
     }
 
     if (segments[0] === "slots") {

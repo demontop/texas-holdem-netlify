@@ -64,6 +64,7 @@ const state = {
   user: null,
   tables: [],
   table: null,
+  onlineUsers: [],
   slot: { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 },
   blackjack: { tables: [], table: null, history: [], bet: 100, buyIn: 2000, maxSeats: 5 },
   view: "auth",
@@ -72,6 +73,8 @@ const state = {
   busy: false,
   poller: null,
   polling: false,
+  presenceTimer: null,
+  presencePolling: false,
   tableRequestSeq: 0,
   renderedTableId: null,
   animationTable: null,
@@ -336,6 +339,10 @@ function applyServerPayload(payload) {
   if (!payload || typeof payload !== "object") return false;
   let changed = false;
   if (payload.serverTime) syncServerClock(payload.serverTime);
+  if (Array.isArray(payload.onlineUsers)) {
+    state.onlineUsers = payload.onlineUsers;
+    changed = true;
+  }
   if (payload.user) {
     state.user = payload.user;
     changed = true;
@@ -445,11 +452,13 @@ function logout() {
   state.user = null;
   state.tables = [];
   state.table = null;
+  state.onlineUsers = [];
   state.slot = { history: [], result: null, reels: SLOT_DEFAULT_REELS, spinning: false, bet: 100 };
   state.blackjack = { tables: [], table: null, history: [], bet: 100, buyIn: 2000, maxSeats: 5 };
   state.view = "auth";
   localStorage.removeItem(STORAGE_KEY);
   stopPolling();
+  stopPresenceHeartbeat();
   render();
 }
 
@@ -486,6 +495,7 @@ async function loadLobby(silent = false) {
     const result = await api("/lobby");
     state.user = result.user;
     state.tables = result.tables;
+    state.onlineUsers = result.onlineUsers || state.onlineUsers || [];
     if (!state.table) state.view = "lobby";
     if (!silent) render();
   } catch (error) {
@@ -572,6 +582,7 @@ async function openBlackjack() {
 function applyBlackjackLobbyPayload(result) {
   state.user = result.user || state.user;
   syncServerClock(result.table?.serverTime || result.serverTime);
+  state.onlineUsers = result.onlineUsers || state.onlineUsers || [];
   state.blackjack = {
     ...state.blackjack,
     tables: result.tables || state.blackjack.tables || [],
@@ -1012,6 +1023,49 @@ function nudgePolling(delay = 80) {
   if (state.token && ["lobby", "table", "blackjack"].includes(state.view)) startPolling(delay);
 }
 
+function startPresenceHeartbeat() {
+  if (!state.token || !state.user || state.presenceTimer) return;
+  state.presenceTimer = window.setInterval(refreshPresence, 25000);
+  refreshPresence();
+}
+
+function stopPresenceHeartbeat() {
+  if (state.presenceTimer) window.clearInterval(state.presenceTimer);
+  state.presenceTimer = null;
+  state.presencePolling = false;
+}
+
+function syncPresenceSubscription() {
+  if (!state.token || !state.user) {
+    stopPresenceHeartbeat();
+    return;
+  }
+  startPresenceHeartbeat();
+}
+
+async function refreshPresence() {
+  if (!state.token || !state.user || state.presencePolling) return false;
+  state.presencePolling = true;
+  try {
+    const result = await api("/presence");
+    const nextOnline = result.onlineUsers || [];
+    const changed = onlineUsersKey(nextOnline) !== onlineUsersKey(state.onlineUsers || []);
+    state.user = result.user || state.user;
+    state.onlineUsers = nextOnline;
+    syncServerClock(result.serverTime);
+    if (changed) syncOnlinePanel();
+    return changed;
+  } catch {
+    return false;
+  } finally {
+    state.presencePolling = false;
+  }
+}
+
+function onlineUsersKey(users) {
+  return (users || []).map((user) => `${user.id}:${user.lastSeenAt}:${user.location?.type}:${user.location?.tableId || ""}`).join("|");
+}
+
 async function loadAdmin() {
   await runBusy(async () => {
     const result = await api("/admin/users");
@@ -1365,6 +1419,7 @@ function lobbyView() {
           </label>
           <button class="primary" type="submit">创建</button>
         </form>
+        ${onlinePanelHtml()}
       </aside>
     </main>
   `);
@@ -1385,6 +1440,46 @@ function lobbyTableRowHtml(table) {
 
 function lobbyTableMeta(table) {
   return `${stageLabel(table.status)} · ${table.players}/${table.maxSeats} 人 · ${table.smallBlind}/${table.bigBlind}`;
+}
+
+function onlinePanelHtml() {
+  return `
+    <section class="online-panel">
+      <div class="online-head">
+        <h2>在线玩家</h2>
+        <span>${(state.onlineUsers || []).length}</span>
+      </div>
+      <div class="online-list" data-online-list>${onlineUsersHtml()}</div>
+    </section>
+  `;
+}
+
+function onlineUsersHtml() {
+  const users = state.onlineUsers || [];
+  if (!users.length) return `<p class="online-empty">暂无在线玩家</p>`;
+  return users.map((user) => `
+    <article class="online-row ${user.isSelf ? "me" : ""}">
+      <span class="online-dot" aria-hidden="true"></span>
+      <div>
+        <strong>${escapeHtml(user.username)}${user.isSelf ? "（你）" : ""}</strong>
+        <small>${onlineLocationText(user.location)}${user.isAdmin ? " · 管理员" : ""}${user.isBot ? " · AI" : ""}</small>
+      </div>
+    </article>
+  `).join("");
+}
+
+function onlineLocationText(location = {}) {
+  if (location.type === "holdem") return `德扑 · ${location.label || "牌桌"}`;
+  if (location.type === "blackjack") return `21点 · ${location.label || "牌桌"}`;
+  return "大厅";
+}
+
+function syncOnlinePanel(root = document) {
+  const list = root.querySelector?.("[data-online-list]");
+  if (!list) return;
+  setInnerHtml(list, onlineUsersHtml());
+  const count = root.querySelector?.(".online-head span");
+  if (count) count.textContent = String((state.onlineUsers || []).length);
 }
 
 function slotsView() {
@@ -1579,6 +1674,7 @@ function blackjackLobbyView() {
           </label>
           <button class="primary" type="submit">创建并入座</button>
         </form>
+        ${onlinePanelHtml()}
       </aside>
     </main>
   `);
@@ -2671,6 +2767,7 @@ function render() {
   syncTableAudio(previousAnimationTable, state.view === "table" ? state.table : blackjackTable);
   state.animationTable = snapshotTable(state.view === "table" ? state.table : null);
   syncPollingSubscription();
+  syncPresenceSubscription();
 }
 
 function patchLobbyView() {
@@ -2707,6 +2804,7 @@ function patchLobbyView() {
   if (!state.tables.length && !list.querySelector(".empty-state")) {
     list.innerHTML = `<div class="empty-state">暂无牌桌</div>`;
   }
+  syncOnlinePanel();
 }
 
 function patchTableView(table) {
