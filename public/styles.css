@@ -265,11 +265,10 @@ label span {
   place-items: center;
   width: clamp(48px, 8vw, 76px);
   aspect-ratio: 0.72;
-  border-radius: 8px;
-  background: var(--cream);
-  color: #141414;
-  font-weight: 900;
-  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.25);
+}
+
+.mini-card .card.small {
+  width: 100%;
 }
 
 .mini-pot {
@@ -394,12 +393,10 @@ label span {
   place-items: center;
   width: 64px;
   aspect-ratio: 0.72;
-  border-radius: 7px;
-  background: var(--cream);
-  color: #111;
-  font-size: 32px;
-  font-weight: 900;
-  box-shadow: 0 14px 22px rgba(0, 0, 0, 0.28);
+}
+
+.game-card-deck .card.small {
+  width: 100%;
 }
 
 .game-card-deck.red {
@@ -1283,12 +1280,12 @@ h2 {
   contain: layout paint;
   overflow: hidden;
   border-radius: 7px;
-  background: #fbf7eb;
+  background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
   color: #151515;
   box-shadow:
     0 10px 20px rgba(0, 0, 0, 0.32),
-    0 2px 0 rgba(255, 255, 255, 0.35) inset,
-    0 0 0 1px rgba(20, 20, 20, 0.13) inset;
+    0 1px 0 rgba(255, 255, 255, 0.28) inset,
+    0 0 0 1px rgba(20, 20, 20, 0.08) inset;
   font-weight: 900;
 }
 
@@ -1300,20 +1297,58 @@ h2 {
   color: #ba1c31;
 }
 
+.rank-glyph,
+.suit-glyph {
+  display: block;
+  flex: 0 0 auto;
+  background: currentColor;
+  -webkit-mask: var(--glyph) center / contain no-repeat;
+  mask: var(--glyph) center / contain no-repeat;
+}
+
+.rank-glyph {
+  width: 1em;
+  height: 0.95em;
+}
+
+.rank-10 {
+  width: 1.38em;
+}
+
+.suit-glyph {
+  width: 0.86em;
+  height: 0.86em;
+}
+
+.rank-a { --glyph: url("/assets/cards/ranks/a.svg"); }
+.rank-2 { --glyph: url("/assets/cards/ranks/2.svg"); }
+.rank-3 { --glyph: url("/assets/cards/ranks/3.svg"); }
+.rank-4 { --glyph: url("/assets/cards/ranks/4.svg"); }
+.rank-5 { --glyph: url("/assets/cards/ranks/5.svg"); }
+.rank-6 { --glyph: url("/assets/cards/ranks/6.svg"); }
+.rank-7 { --glyph: url("/assets/cards/ranks/7.svg"); }
+.rank-8 { --glyph: url("/assets/cards/ranks/8.svg"); }
+.rank-9 { --glyph: url("/assets/cards/ranks/9.svg"); }
+.rank-10 { --glyph: url("/assets/cards/ranks/10.svg"); }
+.rank-j { --glyph: url("/assets/cards/ranks/j.svg"); }
+.rank-q { --glyph: url("/assets/cards/ranks/q.svg"); }
+.rank-k { --glyph: url("/assets/cards/ranks/k.svg"); }
+
+.suit-spade { --glyph: url("/assets/cards/suits/spade.svg"); }
+.suit-heart { --glyph: url("/assets/cards/suits/heart.svg"); }
+.suit-diamond { --glyph: url("/assets/cards/suits/diamond.svg"); }
+.suit-club { --glyph: url("/assets/cards/suits/club.svg"); }
+
 .card-face {
-  background:
-    radial-gradient(circle at 26% 18%, rgba(255, 255, 255, 0.95), transparent 22%),
-    linear-gradient(150deg, #fffdf7, #eee3cf);
+  background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
 }
 
 .card-paper {
   position: absolute;
   inset: 4px;
   border-radius: 5px;
-  background:
-    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.018) 0 1px, transparent 1px 5px),
-    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.28) 0 1px, transparent 1px 6px);
-  box-shadow: 0 0 0 1px rgba(150, 112, 70, 0.12) inset;
+  background: transparent;
+  box-shadow: none;
   pointer-events: none;
 }
 
@@ -1322,8 +1357,9 @@ h2 {
   z-index: 2;
   display: grid;
   justify-items: center;
-  gap: 0;
+  gap: 1px;
   width: 22px;
+  font-size: clamp(13px, 1.45vw, 18px);
   line-height: 0.88;
   letter-spacing: 0;
 }
@@ -1335,6 +1371,11 @@ h2 {
 .card-index i {
   font-style: normal;
   font-size: clamp(12px, 1.25vw, 16px);
+}
+
+.card-index .index-suit {
+  width: 0.82em;
+  height: 0.82em;
 }
 
 .card-index.top {
@@ -1364,13 +1405,18 @@ h2 {
   place-items: center;
   width: 100%;
   height: 100%;
-  font-size: clamp(13px, 2vw, 23px);
   line-height: 1;
   filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.35));
 }
 
-.pip.hero {
-  font-size: clamp(27px, 4vw, 46px);
+.pip-suit {
+  width: clamp(13px, 2vw, 23px);
+  height: clamp(13px, 2vw, 23px);
+}
+
+.pip.hero .pip-suit {
+  width: clamp(27px, 4vw, 46px);
+  height: clamp(27px, 4vw, 46px);
 }
 
 .pip.invert {
@@ -1393,7 +1439,9 @@ h2 {
 .face-title {
   position: absolute;
   top: 6px;
-  font-size: 7px;
+  width: 14px;
+  height: 16px;
+  font-size: 14px;
   color: rgba(30, 30, 30, 0.58);
   letter-spacing: 0;
 }
@@ -1409,34 +1457,33 @@ h2 {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
 }
 
-.face-body b,
-.face-body i,
-.small-center b,
-.small-center i {
-  font: inherit;
-  font-style: normal;
-  line-height: 1;
-}
-
 .face-body {
   gap: 1px;
 }
 
-.face-body i {
-  font-size: 0.62em;
+.face-body .rank-glyph {
+  width: 0.82em;
+  height: 0.78em;
+}
+
+.face-body .suit-glyph {
+  width: 0.55em;
+  height: 0.55em;
 }
 
 .face-crown {
   position: absolute;
   top: 18%;
-  font-size: clamp(15px, 2vw, 26px);
+  width: clamp(15px, 2vw, 26px);
+  height: clamp(15px, 2vw, 26px);
 }
 
 .face-suit {
   position: absolute;
   bottom: 12%;
   transform: rotate(180deg);
-  font-size: clamp(15px, 2vw, 26px);
+  width: clamp(15px, 2vw, 26px);
+  height: clamp(15px, 2vw, 26px);
 }
 
 .card.small .card-index b {
@@ -1475,8 +1522,14 @@ h2 {
   opacity: 0.88;
 }
 
-.card.small .small-center i {
-  font-size: 0.76em;
+.card.small .small-center .rank-glyph {
+  width: 1em;
+  height: 0.92em;
+}
+
+.card.small .small-center .suit-glyph {
+  width: 0.76em;
+  height: 0.76em;
 }
 
 .card.small.rank-a .pip-grid {
@@ -1488,8 +1541,9 @@ h2 {
   display: none;
 }
 
-.card.small.rank-a .pip.hero {
-  font-size: 21px;
+.card.small.rank-a .pip.hero .pip-suit {
+  width: 21px;
+  height: 21px;
 }
 
 .card.small.rank-a .small-center {
@@ -1498,14 +1552,12 @@ h2 {
 
 .card-back {
   overflow: hidden;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.2), transparent 25%),
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.16) 0 3px, transparent 3px 8px),
-    linear-gradient(135deg, #7e1830, #112f5d 58%, #091426);
-  border: 3px solid #efe8d8;
+  background: #101522 url("/assets/cards/card-back.png") center / 100% 100% no-repeat;
+  border: 0;
 }
 
 .back-frame {
+  display: none;
   position: absolute;
   inset: 7px;
   border: 1px solid rgba(255, 255, 255, 0.62);
@@ -1529,7 +1581,7 @@ h2 {
 .back-mark {
   position: absolute;
   inset: 0;
-  display: grid;
+  display: none;
   place-items: center;
   color: rgba(255, 255, 255, 0.78);
   font-size: clamp(12px, 1.5vw, 18px);
@@ -2271,13 +2323,20 @@ th {
 .card {
   width: clamp(54px, 5.1vw, 82px);
   border-radius: 8px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(238, 231, 216, 0.98)),
-    #fbf7ec;
+  background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
   box-shadow:
     0 12px 22px rgba(0, 0, 0, 0.34),
     0 0 0 1px rgba(40, 28, 18, 0.16) inset,
     0 2px 0 rgba(255, 255, 255, 0.64) inset;
+}
+
+.card.card-face {
+  background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
+}
+
+.card.card-back {
+  background: #101522 url("/assets/cards/card-back.png") center / 100% 100% no-repeat;
+  border: 0;
 }
 
 .card.small {

@@ -151,16 +151,25 @@ function stageLabel(status) {
 }
 
 function suitMeta(card) {
-  if (!card) return { rank: "", suit: "", color: "black" };
+  if (!card) return { rank: "", rankKey: "", suit: "", suitKey: "", color: "black" };
   const rankMap = { T: "10", J: "J", Q: "Q", K: "K", A: "A" };
+  const rankKeyMap = { T: "10", J: "j", Q: "q", K: "k", A: "a" };
   const suitMap = {
-    S: ["♠", "black"],
-    H: ["♥", "red"],
-    D: ["♦", "red"],
-    C: ["♣", "black"]
+    S: ["♠", "spade", "black"],
+    H: ["♥", "heart", "red"],
+    D: ["♦", "diamond", "red"],
+    C: ["♣", "club", "black"]
   };
-  const [suit, color] = suitMap[card[1]] || ["", "black"];
-  return { rawRank: card[0], rank: rankMap[card[0]] || card[0], suit, color };
+  const [suit, suitKey, color] = suitMap[card[1]] || ["", "", "black"];
+  return { rawRank: card[0], rank: rankMap[card[0]] || card[0], rankKey: rankKeyMap[card[0]] || card[0], suit, suitKey, color };
+}
+
+function rankGlyphHtml(meta, className = "") {
+  return `<span class="rank-glyph rank-${escapeAttr(meta.rankKey)} ${className}" aria-hidden="true"></span>`;
+}
+
+function suitGlyphHtml(meta, className = "") {
+  return `<span class="suit-glyph suit-${escapeAttr(meta.suitKey)} ${className}" aria-hidden="true"></span>`;
 }
 
 function cardHtml(card, small = false) {
@@ -176,11 +185,11 @@ function cardHtml(card, small = false) {
   const isFace = ["J", "Q", "K"].includes(meta.rawRank);
   const pips = isFace ? faceCardHtml(meta) : pipCardHtml(meta);
   return `
-    <div class="card card-face ${meta.color} rank-${meta.rawRank.toLowerCase()} ${isFace ? "face" : ""} ${small ? "small" : ""}">
-      <span class="card-index top"><b>${meta.rank}</b><i>${meta.suit}</i></span>
+    <div class="card card-face ${meta.color} rank-${meta.rawRank.toLowerCase()} ${isFace ? "face" : ""} ${small ? "small" : ""}" aria-label="${escapeAttr(`${meta.rank}${meta.suit}`)}">
+      <span class="card-index top">${rankGlyphHtml(meta, "index-rank")}${suitGlyphHtml(meta, "index-suit")}</span>
       ${pips}
-      <span class="small-center"><b>${meta.rank}</b><i>${meta.suit}</i></span>
-      <span class="card-index bottom"><b>${meta.rank}</b><i>${meta.suit}</i></span>
+      <span class="small-center">${rankGlyphHtml(meta, "small-rank")}${suitGlyphHtml(meta, "small-suit")}</span>
+      <span class="card-index bottom">${rankGlyphHtml(meta, "index-rank")}${suitGlyphHtml(meta, "index-suit")}</span>
     </div>
   `;
 }
@@ -211,20 +220,19 @@ function pipCardHtml(meta) {
   return `
     <span class="card-paper"></span>
     <div class="pip-grid">
-      ${pips.map(([row, column, mode]) => `<span class="pip ${mode || ""}" style="grid-row:${row};grid-column:${column}">${meta.suit}</span>`).join("")}
+      ${pips.map(([row, column, mode]) => `<span class="pip ${mode || ""}" style="grid-row:${row};grid-column:${column}">${suitGlyphHtml(meta, "pip-suit")}</span>`).join("")}
     </div>
   `;
 }
 
 function faceCardHtml(meta) {
-  const titles = { J: "JACK", Q: "QUEEN", K: "KING" };
   return `
     <span class="card-paper"></span>
     <div class="face-art">
-      <span class="face-title">${titles[meta.rawRank]}</span>
-      <span class="face-crown">${meta.suit}</span>
-      <span class="face-body"><b>${meta.rawRank}</b><i>${meta.suit}</i></span>
-      <span class="face-suit">${meta.suit}</span>
+      ${rankGlyphHtml(meta, "face-title")}
+      ${suitGlyphHtml(meta, "face-crown")}
+      <span class="face-body">${rankGlyphHtml(meta, "face-body-rank")}${suitGlyphHtml(meta, "face-body-suit")}</span>
+      ${suitGlyphHtml(meta, "face-suit")}
     </div>
   `;
 }
@@ -1372,8 +1380,8 @@ function gamesView() {
           <article class="game-card game-card-poker">
             <div class="game-card-art" aria-hidden="true">
               <span class="game-card-felt"></span>
-              <span class="game-card-deck red">A</span>
-              <span class="game-card-deck black">K</span>
+              <div class="game-card-deck red">${cardHtml("AH", true)}</div>
+              <div class="game-card-deck black">${cardHtml("KS", true)}</div>
               <span class="game-chip-stack">${chipStackHtml(188000, true)}</span>
             </div>
             <div>
@@ -1385,8 +1393,8 @@ function gamesView() {
           <article class="game-card game-card-blackjack">
             <div class="game-card-art" aria-hidden="true">
               <span class="game-card-dealer"></span>
-              <span class="game-card-deck red">J</span>
-              <span class="game-card-deck black">10</span>
+              <div class="game-card-deck red">${cardHtml("JH", true)}</div>
+              <div class="game-card-deck black">${cardHtml("TS", true)}</div>
               <span class="game-chip-stack">${chipStackHtml(21000, true)}</span>
             </div>
             <div>
@@ -1443,7 +1451,7 @@ function authView() {
       </section>
       <section class="preview-table" aria-hidden="true">
         <div class="mini-felt">
-          ${["A♠", "K♠", "Q♠", "J♠", "10♠"].map((text) => `<div class="mini-card">${text}</div>`).join("")}
+          ${["AS", "KS", "QS", "JS", "TS"].map((card) => `<div class="mini-card">${cardHtml(card, true)}</div>`).join("")}
           <div class="mini-pot">${chipStackHtml(8880)}</div>
         </div>
       </section>
