@@ -1320,24 +1320,24 @@ h2 {
   height: 0.86em;
 }
 
-.rank-a { --glyph: url("/assets/cards/ranks/a.svg"); }
-.rank-2 { --glyph: url("/assets/cards/ranks/2.svg"); }
-.rank-3 { --glyph: url("/assets/cards/ranks/3.svg"); }
-.rank-4 { --glyph: url("/assets/cards/ranks/4.svg"); }
-.rank-5 { --glyph: url("/assets/cards/ranks/5.svg"); }
-.rank-6 { --glyph: url("/assets/cards/ranks/6.svg"); }
-.rank-7 { --glyph: url("/assets/cards/ranks/7.svg"); }
-.rank-8 { --glyph: url("/assets/cards/ranks/8.svg"); }
-.rank-9 { --glyph: url("/assets/cards/ranks/9.svg"); }
-.rank-10 { --glyph: url("/assets/cards/ranks/10.svg"); }
-.rank-j { --glyph: url("/assets/cards/ranks/j.svg"); }
-.rank-q { --glyph: url("/assets/cards/ranks/q.svg"); }
-.rank-k { --glyph: url("/assets/cards/ranks/k.svg"); }
+.rank-a { --glyph: url("/assets/cards/ranks/a.png"); }
+.rank-2 { --glyph: url("/assets/cards/ranks/2.png"); }
+.rank-3 { --glyph: url("/assets/cards/ranks/3.png"); }
+.rank-4 { --glyph: url("/assets/cards/ranks/4.png"); }
+.rank-5 { --glyph: url("/assets/cards/ranks/5.png"); }
+.rank-6 { --glyph: url("/assets/cards/ranks/6.png"); }
+.rank-7 { --glyph: url("/assets/cards/ranks/7.png"); }
+.rank-8 { --glyph: url("/assets/cards/ranks/8.png"); }
+.rank-9 { --glyph: url("/assets/cards/ranks/9.png"); }
+.rank-10 { --glyph: url("/assets/cards/ranks/10.png"); }
+.rank-j { --glyph: url("/assets/cards/ranks/j.png"); }
+.rank-q { --glyph: url("/assets/cards/ranks/q.png"); }
+.rank-k { --glyph: url("/assets/cards/ranks/k.png"); }
 
-.suit-spade { --glyph: url("/assets/cards/suits/spade.svg"); }
-.suit-heart { --glyph: url("/assets/cards/suits/heart.svg"); }
-.suit-diamond { --glyph: url("/assets/cards/suits/diamond.svg"); }
-.suit-club { --glyph: url("/assets/cards/suits/club.svg"); }
+.suit-spade { --glyph: url("/assets/cards/suits/spade.png"); }
+.suit-heart { --glyph: url("/assets/cards/suits/heart.png"); }
+.suit-diamond { --glyph: url("/assets/cards/suits/diamond.png"); }
+.suit-club { --glyph: url("/assets/cards/suits/club.png"); }
 
 .card-face {
   background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
