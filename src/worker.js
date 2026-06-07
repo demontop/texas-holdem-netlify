@@ -1782,7 +1782,10 @@ function publicBlackjackTable(table, viewer) {
     },
     seats: table.seats.map((player) => {
       if (!player) return null;
-      const cards = player.cards || [];
+      const realCards = player.cards || [];
+      const isViewer = Boolean(viewer && player.userId === viewer.id);
+      const revealCards = isViewer || table.status === "showdown";
+      const cards = revealCards ? realCards : realCards.map(() => null);
       return {
         seat: player.seat,
         userId: player.userId,
@@ -1791,8 +1794,11 @@ function publicBlackjackTable(table, viewer) {
         stack: player.stack,
         bet: player.bet || 0,
         cards,
-        score: blackjackScore(cards),
-        scoreLabel: cards.length ? blackjackScoreLabel(cards) : "等待开局",
+        cardsHidden: Boolean(!revealCards && realCards.length),
+        score: revealCards ? blackjackScore(realCards) : null,
+        scoreLabel: revealCards
+          ? (realCards.length ? blackjackScoreLabel(realCards) : "等待开局")
+          : (realCards.length ? "暗牌" : "等待开局"),
         status: player.status || "waiting",
         doubled: Boolean(player.doubled),
         lastAction: player.lastAction || "等待",

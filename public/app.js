@@ -1955,7 +1955,7 @@ function blackjackSeatClassName(entry, table) {
   const isMe = player && table.youSeat === entry.actualSeat;
   const isTurn = table.currentTurnSeat === entry.actualSeat && table.status === "playing";
   const outcome = player?.result?.outcome || "";
-  return ["blackjack-player-seat", `bj-seat-${entry.displaySeat}`, player ? "occupied" : "empty", isMe ? "me" : "", isTurn ? "turn" : "", outcome]
+  return ["blackjack-player-seat", `bj-seat-${entry.displaySeat}`, player ? "occupied" : "empty", isMe ? "me" : "", player?.cardsHidden ? "cards-hidden" : "", isTurn ? "turn" : "", outcome]
     .filter(Boolean)
     .join(" ");
 }
