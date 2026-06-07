@@ -164,32 +164,23 @@ function suitMeta(card) {
   return { rawRank: card[0], rank: rankMap[card[0]] || card[0], rankKey: rankKeyMap[card[0]] || card[0], suit, suitKey, color };
 }
 
-function rankGlyphHtml(meta, className = "") {
-  return `<span class="rank-glyph rank-${escapeAttr(meta.rankKey)} ${className}" aria-hidden="true"></span>`;
-}
-
-function suitGlyphHtml(meta, className = "") {
-  return `<span class="suit-glyph suit-${escapeAttr(meta.suitKey)} ${className}" aria-hidden="true"></span>`;
+function cardImagePath(card) {
+  return `/assets/cards/deck/${String(card).toLowerCase()}.webp`;
 }
 
 function cardHtml(card, small = false) {
   if (!card) {
     return `
       <div class="card card-back ${small ? "small" : ""}" aria-label="暗牌">
-        <span class="back-frame"></span>
-        <span class="back-mark">TH</span>
+        <img class="card-image" src="/assets/cards/deck/back.webp" alt="" draggable="false" />
       </div>
     `;
   }
   const meta = suitMeta(card);
   const isFace = ["J", "Q", "K"].includes(meta.rawRank);
-  const pips = isFace ? faceCardHtml(meta) : pipCardHtml(meta);
   return `
     <div class="card card-face ${meta.color} rank-${meta.rawRank.toLowerCase()} ${isFace ? "face" : ""} ${small ? "small" : ""}" aria-label="${escapeAttr(`${meta.rank}${meta.suit}`)}">
-      <span class="card-index top">${rankGlyphHtml(meta, "index-rank")}${suitGlyphHtml(meta, "index-suit")}</span>
-      ${pips}
-      <span class="small-center">${rankGlyphHtml(meta, "small-rank")}${suitGlyphHtml(meta, "small-suit")}</span>
-      <span class="card-index bottom">${rankGlyphHtml(meta, "index-rank")}${suitGlyphHtml(meta, "index-suit")}</span>
+      <img class="card-image" src="${cardImagePath(card)}" alt="" draggable="false" />
     </div>
   `;
 }
@@ -199,40 +190,6 @@ function communityCardHtml(card) {
   return `
     <div class="card card-placeholder" aria-hidden="true">
       <span></span>
-    </div>
-  `;
-}
-
-function pipCardHtml(meta) {
-  const layouts = {
-    A: [[50, 50, "hero"]],
-    "2": [[50, 30], [50, 70, "invert"]],
-    "3": [[50, 30], [50, 50], [50, 70, "invert"]],
-    "4": [[36, 34], [64, 34], [36, 66, "invert"], [64, 66, "invert"]],
-    "5": [[36, 34], [64, 34], [50, 50], [36, 66, "invert"], [64, 66, "invert"]],
-    "6": [[36, 33], [64, 33], [36, 50], [64, 50], [36, 67, "invert"], [64, 67, "invert"]],
-    "7": [[36, 32], [64, 32], [50, 42], [36, 53], [64, 53], [36, 68, "invert"], [64, 68, "invert"]],
-    "8": [[36, 31], [64, 31], [50, 41], [36, 52], [64, 52], [50, 60, "invert"], [36, 69, "invert"], [64, 69, "invert"]],
-    "9": [[37, 31], [63, 31], [37, 41], [63, 41], [50, 50], [37, 59, "invert"], [63, 59, "invert"], [37, 69, "invert"], [63, 69, "invert"]],
-    T: [[37, 30], [63, 30], [37, 39], [63, 39], [50, 45], [50, 55, "invert"], [37, 61, "invert"], [63, 61, "invert"], [37, 70, "invert"], [63, 70, "invert"]]
-  };
-  const pips = layouts[meta.rawRank] || [];
-  return `
-    <span class="card-paper"></span>
-    <div class="pip-grid">
-      ${pips.map(([x, y, mode]) => `<span class="pip ${mode || ""}" style="--pip-x:${x}%;--pip-y:${y}%">${suitGlyphHtml(meta, "pip-suit")}</span>`).join("")}
-    </div>
-  `;
-}
-
-function faceCardHtml(meta) {
-  return `
-    <span class="card-paper"></span>
-    <div class="face-art">
-      ${rankGlyphHtml(meta, "face-title")}
-      ${suitGlyphHtml(meta, "face-crown")}
-      <span class="face-body">${rankGlyphHtml(meta, "face-body-rank")}${suitGlyphHtml(meta, "face-body-suit")}</span>
-      ${suitGlyphHtml(meta, "face-suit")}
     </div>
   `;
 }

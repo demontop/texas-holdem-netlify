@@ -1293,278 +1293,22 @@ h2 {
   width: clamp(30px, 3.4vw, 46px);
 }
 
+.card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
 .card.red {
   color: #ba1c31;
 }
 
-.rank-glyph,
-.suit-glyph {
-  display: block;
-  flex: 0 0 auto;
-  background: currentColor;
-  -webkit-mask: var(--glyph) center / contain no-repeat;
-  mask: var(--glyph) center / contain no-repeat;
-}
-
-.rank-glyph {
-  width: 1em;
-  height: 0.95em;
-}
-
-.rank-10 {
-  width: 1.38em;
-}
-
-.suit-glyph {
-  width: 0.86em;
-  height: 0.86em;
-}
-
-.rank-a { --glyph: url("/assets/cards/ranks/a.png"); }
-.rank-2 { --glyph: url("/assets/cards/ranks/2.png"); }
-.rank-3 { --glyph: url("/assets/cards/ranks/3.png"); }
-.rank-4 { --glyph: url("/assets/cards/ranks/4.png"); }
-.rank-5 { --glyph: url("/assets/cards/ranks/5.png"); }
-.rank-6 { --glyph: url("/assets/cards/ranks/6.png"); }
-.rank-7 { --glyph: url("/assets/cards/ranks/7.png"); }
-.rank-8 { --glyph: url("/assets/cards/ranks/8.png"); }
-.rank-9 { --glyph: url("/assets/cards/ranks/9.png"); }
-.rank-10 { --glyph: url("/assets/cards/ranks/10.png"); }
-.rank-j { --glyph: url("/assets/cards/ranks/j.png"); }
-.rank-q { --glyph: url("/assets/cards/ranks/q.png"); }
-.rank-k { --glyph: url("/assets/cards/ranks/k.png"); }
-
-.suit-spade { --glyph: url("/assets/cards/suits/spade.png"); }
-.suit-heart { --glyph: url("/assets/cards/suits/heart.png"); }
-.suit-diamond { --glyph: url("/assets/cards/suits/diamond.png"); }
-.suit-club { --glyph: url("/assets/cards/suits/club.png"); }
-
 .card-face {
   background: #fbf7eb url("/assets/cards/card-front.png") center / 100% 100% no-repeat;
-}
-
-.card-paper {
-  position: absolute;
-  inset: 4px;
-  border-radius: 5px;
-  background: transparent;
-  box-shadow: none;
-  pointer-events: none;
-}
-
-.card-index {
-  position: absolute;
-  z-index: 2;
-  display: grid;
-  justify-items: center;
-  gap: 1px;
-  width: 22px;
-  font-size: clamp(13px, 1.45vw, 18px);
-  line-height: 0.88;
-  letter-spacing: 0;
-}
-
-.card-index b {
-  font-size: clamp(12px, 1.35vw, 17px);
-}
-
-.card-index i {
-  font-style: normal;
-  font-size: clamp(12px, 1.25vw, 16px);
-}
-
-.card-index .index-suit {
-  width: 0.82em;
-  height: 0.82em;
-}
-
-.card-index.top {
-  top: 6px;
-  left: 5px;
-}
-
-.card-index.bottom {
-  right: 5px;
-  bottom: 6px;
-  transform: rotate(180deg);
-}
-
-.pip-grid {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-}
-
-.pip {
-  position: absolute;
-  left: var(--pip-x);
-  top: var(--pip-y);
-  display: grid;
-  place-items: center;
-  width: var(--pip-size, clamp(11px, 1.45vw, 19px));
-  height: var(--pip-size, clamp(11px, 1.45vw, 19px));
-  line-height: 1;
-  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.35));
-  transform: translate(-50%, -50%);
-}
-
-.pip-suit {
-  width: 100%;
-  height: 100%;
-}
-
-.card.rank-5,
-.card.rank-6,
-.card.rank-7,
-.card.rank-8 {
-  --pip-size: clamp(9px, 1vw, 13px);
-}
-
-.card.rank-9,
-.card.rank-t {
-  --pip-size: clamp(9px, 1vw, 13px);
-}
-
-.pip.hero .pip-suit {
-  width: 100%;
-  height: 100%;
-}
-
-.pip.invert {
-  transform: translate(-50%, -50%) rotate(180deg);
-}
-
-.pip.hero {
-  width: clamp(26px, 3.5vw, 42px);
-  height: clamp(26px, 3.5vw, 42px);
-}
-
-.face-art {
-  position: absolute;
-  inset: 19% 18%;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  border-radius: 8px;
-  background:
-    linear-gradient(145deg, rgba(215, 173, 89, 0.22), rgba(255, 255, 255, 0.05)),
-    repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.055) 0 2px, transparent 2px 6px);
-  box-shadow: 0 0 0 1px currentColor inset, 0 6px 14px rgba(0, 0, 0, 0.15) inset;
-}
-
-.face-title {
-  position: absolute;
-  top: 6px;
-  width: 14px;
-  height: 16px;
-  font-size: 14px;
-  color: rgba(30, 30, 30, 0.58);
-  letter-spacing: 0;
-}
-
-.face-body {
-  display: grid;
-  place-items: center;
-  width: 42%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.62);
-  font-size: clamp(18px, 2.6vw, 31px);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.1);
-}
-
-.face-body {
-  gap: 1px;
-}
-
-.face-body .rank-glyph {
-  width: 0.82em;
-  height: 0.78em;
-}
-
-.face-body .suit-glyph {
-  width: 0.55em;
-  height: 0.55em;
-}
-
-.face-crown {
-  position: absolute;
-  top: 18%;
-  width: clamp(15px, 2vw, 26px);
-  height: clamp(15px, 2vw, 26px);
-}
-
-.face-suit {
-  position: absolute;
-  bottom: 12%;
-  transform: rotate(180deg);
-  width: clamp(15px, 2vw, 26px);
-  height: clamp(15px, 2vw, 26px);
-}
-
-.card.small .card-index b {
-  font-size: 10px;
-}
-
-.card.small .card-index i {
-  font-size: 10px;
-}
-
-.card.small .pip-grid,
-.card.small .face-title {
-  display: none;
-}
-
-.card.small .face-art {
-  display: none;
-}
-
-.card.small .face-body {
-  font-size: 16px;
-}
-
-.small-center {
-  display: none;
-}
-
-.card.small .small-center {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  gap: 1px;
-  font-size: 21px;
-  font-weight: 900;
-  opacity: 0.88;
-}
-
-.card.small .small-center .rank-glyph {
-  width: 1em;
-  height: 0.92em;
-}
-
-.card.small .small-center .suit-glyph {
-  width: 0.76em;
-  height: 0.76em;
-}
-
-.card.small.rank-a .pip-grid {
-  display: block;
-  inset: 0;
-}
-
-.card.small.rank-a .pip:not(.hero) {
-  display: none;
-}
-
-.card.small.rank-a .pip.hero {
-  width: 21px;
-  height: 21px;
-}
-
-.card.small.rank-a .small-center {
-  display: none;
 }
 
 .card-back {
@@ -2183,16 +1927,6 @@ th {
     width: 32px;
   }
 
-  .card-index.top {
-    top: 5px;
-    left: 4px;
-  }
-
-  .card-index.bottom {
-    right: 4px;
-    bottom: 5px;
-  }
-
   .table-center {
     inset: 33% 5%;
     grid-template-rows: 64px 42px 32px;
@@ -2374,31 +2108,6 @@ th {
   aspect-ratio: 0.72;
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.08);
-}
-
-.card-index {
-  width: 20px;
-}
-
-.card-index b {
-  font-size: clamp(11px, 1vw, 15px);
-}
-
-.card-index i {
-  font-size: clamp(10px, 0.95vw, 14px);
-}
-
-.pip-grid {
-  inset: 0;
-}
-
-.pip.hero {
-  width: clamp(28px, 3.2vw, 44px);
-  height: clamp(28px, 3.2vw, 44px);
-}
-
-.face-art {
-  inset: 20% 18%;
 }
 
 .pot {
@@ -3093,18 +2802,6 @@ th {
 .table-shell .board-slot .card {
   width: min(100%, 88px);
   border-radius: 7px;
-}
-
-.table-shell .board-slot .card-index {
-  width: 26px;
-}
-
-.table-shell .board-slot .card-index b {
-  font-size: 18px;
-}
-
-.table-shell .board-slot .card-index i {
-  font-size: 17px;
 }
 
 .table-shell .pot {
@@ -4257,20 +3954,6 @@ th {
   transform: rotate(5deg) translateY(3px);
 }
 
-.showdown-winner-cards .card.small .small-center {
-  font-size: clamp(23px, 3.2vw, 34px);
-}
-
-.showdown-winner-cards .card.small .card-index b,
-.showdown-winner-cards .card.small .card-index i {
-  font-size: 12px;
-}
-
-.showdown-winner-cards .card.small.rank-a .pip.hero {
-  width: clamp(25px, 3vw, 32px);
-  height: clamp(25px, 3vw, 32px);
-}
-
 .showdown-stacks {
   display: none;
 }
@@ -4377,20 +4060,6 @@ th {
 .table-shell .stage-showdown .pot,
 .table-shell .stage-showdown .status-pill {
   z-index: 12;
-}
-
-.table-shell .stage-showdown .seat.winner .card.small .small-center {
-  font-size: clamp(23px, 3.2vw, 34px);
-}
-
-.table-shell .stage-showdown .seat.winner .card.small .card-index b,
-.table-shell .stage-showdown .seat.winner .card.small .card-index i {
-  font-size: 12px;
-}
-
-.table-shell .stage-showdown .seat.winner .card.small.rank-a .pip.hero {
-  width: clamp(25px, 3vw, 32px);
-  height: clamp(25px, 3vw, 32px);
 }
 
 .table-shell .seat.occupied {
@@ -4528,20 +4197,6 @@ th {
 
 .table-shell .seat-0 .hole-cards .card.small {
   width: clamp(56px, 4.4vw, 72px);
-}
-
-.table-shell .seat-0 .hole-cards .card.small .card-index b,
-.table-shell .seat-0 .hole-cards .card.small .card-index i {
-  font-size: clamp(12px, 1.15vw, 15px);
-}
-
-.table-shell .seat-0 .hole-cards .card.small .small-center {
-  font-size: clamp(25px, 2.4vw, 34px);
-}
-
-.table-shell .seat-0 .hole-cards .card.small.rank-a .pip.hero {
-  width: clamp(28px, 2.8vw, 38px);
-  height: clamp(28px, 2.8vw, 38px);
 }
 
 .table-shell .seat-0 .player-info {
