@@ -5396,8 +5396,8 @@ th {
 
 .blackjack-dealer {
   left: 50%;
-  top: 6.4%;
-  width: min(420px, 42%);
+  top: 4.2%;
+  width: min(340px, 36%);
   grid-template-columns: 1fr;
   grid-template-areas:
     "avatar"
@@ -5405,7 +5405,7 @@ th {
     "cards";
   align-items: center;
   justify-items: center;
-  gap: 6px;
+  gap: 3px;
   transform: translateX(-50%);
 }
 
@@ -5428,13 +5428,13 @@ th {
 }
 
 .blackjack-shell .blackjack-dealer .avatar-ring {
-  width: 94px;
-  height: 94px;
+  width: 62px;
+  height: 62px;
 }
 
 .blackjack-shell .blackjack-dealer .avatar-face {
-  width: 80px;
-  height: 80px;
+  width: 50px;
+  height: 50px;
 }
 
 .blackjack-shell .blackjack-player .avatar-ring {
@@ -5445,6 +5445,19 @@ th {
 .blackjack-shell .blackjack-player .avatar-face {
   width: 98px;
   height: 98px;
+}
+
+.blackjack-dealer .blackjack-seat-info {
+  min-width: 104px;
+  padding: 4px 10px;
+}
+
+.blackjack-dealer .blackjack-seat-info strong {
+  font-size: 12px;
+}
+
+.blackjack-dealer .blackjack-seat-info span {
+  font-size: 13px;
 }
 
 .blackjack-seat-info {
@@ -5503,11 +5516,22 @@ th {
   width: clamp(78px, 6.1vw, 116px);
 }
 
+.blackjack-dealer .dealer-cards {
+  gap: 5px;
+  min-height: 72px;
+  transform: translateY(-8px);
+}
+
+.blackjack-shell .blackjack-dealer .dealer-cards .card {
+  width: clamp(48px, 4.1vw, 70px);
+  border-radius: 6px;
+}
+
 .blackjack-center {
   position: absolute;
   left: 50%;
   top: 48%;
-  z-index: 2;
+  z-index: 5;
   display: grid;
   justify-items: center;
   gap: 5px;
