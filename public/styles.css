@@ -1391,36 +1391,53 @@ h2 {
 
 .pip-grid {
   position: absolute;
-  inset: 20% 17% 18%;
+  inset: 0;
   z-index: 1;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(5, 1fr);
-  align-items: center;
-  justify-items: center;
+  pointer-events: none;
 }
 
 .pip {
-  display: inline-grid;
+  position: absolute;
+  left: var(--pip-x);
+  top: var(--pip-y);
+  display: grid;
   place-items: center;
-  width: 100%;
-  height: 100%;
+  width: var(--pip-size, clamp(11px, 1.45vw, 19px));
+  height: var(--pip-size, clamp(11px, 1.45vw, 19px));
   line-height: 1;
   filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.35));
+  transform: translate(-50%, -50%);
 }
 
 .pip-suit {
-  width: clamp(13px, 2vw, 23px);
-  height: clamp(13px, 2vw, 23px);
+  width: 100%;
+  height: 100%;
+}
+
+.card.rank-5,
+.card.rank-6,
+.card.rank-7,
+.card.rank-8 {
+  --pip-size: clamp(9px, 1vw, 13px);
+}
+
+.card.rank-9,
+.card.rank-t {
+  --pip-size: clamp(9px, 1vw, 13px);
 }
 
 .pip.hero .pip-suit {
-  width: clamp(27px, 4vw, 46px);
-  height: clamp(27px, 4vw, 46px);
+  width: 100%;
+  height: 100%;
 }
 
 .pip.invert {
-  transform: rotate(180deg);
+  transform: translate(-50%, -50%) rotate(180deg);
+}
+
+.pip.hero {
+  width: clamp(26px, 3.5vw, 42px);
+  height: clamp(26px, 3.5vw, 42px);
 }
 
 .face-art {
@@ -1533,15 +1550,15 @@ h2 {
 }
 
 .card.small.rank-a .pip-grid {
-  display: grid;
-  inset: 31% 28%;
+  display: block;
+  inset: 0;
 }
 
 .card.small.rank-a .pip:not(.hero) {
   display: none;
 }
 
-.card.small.rank-a .pip.hero .pip-suit {
+.card.small.rank-a .pip.hero {
   width: 21px;
   height: 21px;
 }
@@ -2372,15 +2389,12 @@ th {
 }
 
 .pip-grid {
-  inset: 19% 18% 17%;
-}
-
-.pip {
-  font-size: clamp(14px, 1.75vw, 25px);
+  inset: 0;
 }
 
 .pip.hero {
-  font-size: clamp(32px, 3.4vw, 50px);
+  width: clamp(28px, 3.2vw, 44px);
+  height: clamp(28px, 3.2vw, 44px);
 }
 
 .face-art {
@@ -4253,7 +4267,8 @@ th {
 }
 
 .showdown-winner-cards .card.small.rank-a .pip.hero {
-  font-size: clamp(25px, 3vw, 32px);
+  width: clamp(25px, 3vw, 32px);
+  height: clamp(25px, 3vw, 32px);
 }
 
 .showdown-stacks {
@@ -4374,7 +4389,8 @@ th {
 }
 
 .table-shell .stage-showdown .seat.winner .card.small.rank-a .pip.hero {
-  font-size: clamp(25px, 3vw, 32px);
+  width: clamp(25px, 3vw, 32px);
+  height: clamp(25px, 3vw, 32px);
 }
 
 .table-shell .seat.occupied {
@@ -4524,7 +4540,8 @@ th {
 }
 
 .table-shell .seat-0 .hole-cards .card.small.rank-a .pip.hero {
-  font-size: clamp(28px, 2.8vw, 38px);
+  width: clamp(28px, 2.8vw, 38px);
+  height: clamp(28px, 2.8vw, 38px);
 }
 
 .table-shell .seat-0 .player-info {

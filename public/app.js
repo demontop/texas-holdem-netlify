@@ -205,22 +205,22 @@ function communityCardHtml(card) {
 
 function pipCardHtml(meta) {
   const layouts = {
-    A: [[3, 2, "hero"]],
-    "2": [[1, 2], [5, 2, "invert"]],
-    "3": [[1, 2], [3, 2], [5, 2, "invert"]],
-    "4": [[1, 1], [1, 3], [5, 1, "invert"], [5, 3, "invert"]],
-    "5": [[1, 1], [1, 3], [3, 2], [5, 1, "invert"], [5, 3, "invert"]],
-    "6": [[1, 1], [1, 3], [3, 1], [3, 3], [5, 1, "invert"], [5, 3, "invert"]],
-    "7": [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3], [5, 1, "invert"], [5, 3, "invert"]],
-    "8": [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3], [4, 2, "invert"], [5, 1, "invert"], [5, 3, "invert"]],
-    "9": [[1, 1], [1, 3], [2, 1], [2, 3], [3, 2], [4, 1, "invert"], [4, 3, "invert"], [5, 1, "invert"], [5, 3, "invert"]],
-    T: [[1, 1], [1, 3], [2, 1], [2, 3], [2, 2], [4, 1, "invert"], [4, 3, "invert"], [4, 2, "invert"], [5, 1, "invert"], [5, 3, "invert"]]
+    A: [[50, 50, "hero"]],
+    "2": [[50, 30], [50, 70, "invert"]],
+    "3": [[50, 30], [50, 50], [50, 70, "invert"]],
+    "4": [[36, 34], [64, 34], [36, 66, "invert"], [64, 66, "invert"]],
+    "5": [[36, 34], [64, 34], [50, 50], [36, 66, "invert"], [64, 66, "invert"]],
+    "6": [[36, 33], [64, 33], [36, 50], [64, 50], [36, 67, "invert"], [64, 67, "invert"]],
+    "7": [[36, 32], [64, 32], [50, 42], [36, 53], [64, 53], [36, 68, "invert"], [64, 68, "invert"]],
+    "8": [[36, 31], [64, 31], [50, 41], [36, 52], [64, 52], [50, 60, "invert"], [36, 69, "invert"], [64, 69, "invert"]],
+    "9": [[37, 31], [63, 31], [37, 41], [63, 41], [50, 50], [37, 59, "invert"], [63, 59, "invert"], [37, 69, "invert"], [63, 69, "invert"]],
+    T: [[37, 30], [63, 30], [37, 39], [63, 39], [50, 45], [50, 55, "invert"], [37, 61, "invert"], [63, 61, "invert"], [37, 70, "invert"], [63, 70, "invert"]]
   };
   const pips = layouts[meta.rawRank] || [];
   return `
     <span class="card-paper"></span>
     <div class="pip-grid">
-      ${pips.map(([row, column, mode]) => `<span class="pip ${mode || ""}" style="grid-row:${row};grid-column:${column}">${suitGlyphHtml(meta, "pip-suit")}</span>`).join("")}
+      ${pips.map(([x, y, mode]) => `<span class="pip ${mode || ""}" style="--pip-x:${x}%;--pip-y:${y}%">${suitGlyphHtml(meta, "pip-suit")}</span>`).join("")}
     </div>
   `;
 }
